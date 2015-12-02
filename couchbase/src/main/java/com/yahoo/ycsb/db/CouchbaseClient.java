@@ -66,6 +66,7 @@ public class CouchbaseClient extends DB {
 
   public static final String STALE_PROPERTY_DEFAULT = Stale.OK.name();
   public static final String SCAN_PROPERTY_DEFAULT = "0.0";
+  public static final String UPSERT_PROPERTY = "couchbase.upsert";
 
   protected static final ObjectMapper JSON_MAPPER = new ObjectMapper();
 
@@ -78,6 +79,8 @@ public class CouchbaseClient extends DB {
   private String viewName;
   private Stale stale;
   private View view;
+  private boolean upsert;
+
   private final Logger log = LoggerFactory.getLogger(getClass());
 
   @Override
@@ -90,6 +93,7 @@ public class CouchbaseClient extends DB {
 
     checkFutures = props.getProperty(CHECKF_PROPERTY, "true").equals("true");
     useJson = props.getProperty(JSON_PROPERTY, "true").equals("true");
+    upsert = props.getProperty(UPSERT_PROPERTY, "false").equals("true");
 
     persistTo = parsePersistTo(props.getProperty(PERSIST_PROPERTY, "0"));
     replicateTo = parseReplicateTo(props.getProperty(REPLICATE_PROPERTY, "0"));
@@ -244,7 +248,12 @@ public class CouchbaseClient extends DB {
     String formattedKey = formatKey(table, key);
 
     try {
-      final OperationFuture<Boolean> future = client.add(formattedKey, encode(values), persistTo, replicateTo);
+      OperationFuture<Boolean> future;
+      if (upsert) {
+        future = client.set(formattedKey, encode(values), persistTo, replicateTo);
+      } else {
+        future = client.add(formattedKey, encode(values), persistTo, replicateTo);
+      }
       return checkFutureStatus(future);
     } catch (Exception e) {
       if (log.isErrorEnabled()) {
