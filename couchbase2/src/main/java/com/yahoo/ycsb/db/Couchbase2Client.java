@@ -1,3 +1,20 @@
+/**
+ * Copyright (c) 2013 Yahoo! Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License"); you
+ * may not use this file except in compliance with the License. You
+ * may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+ * implied. See the License for the specific language governing
+ * permissions and limitations under the License. See accompanying
+ * LICENSE file.
+ */
+
 package com.yahoo.ycsb.db;
 
 import com.couchbase.client.java.Bucket;
@@ -25,6 +42,24 @@ import java.util.Set;
 import java.util.Vector;
 import java.util.concurrent.TimeUnit;
 
+/**
+ * A class that wraps the 1.x CouchbaseClient to allow it to be interfaced with YCSB.
+ * This class extends {@link DB} and implements the database interface used by YCSB client.
+ *
+ * <p> The following options must be passed when using this database client.
+ *
+ * <ul>
+ * <li><b>couchbase.host=127.0.0.1</b> The hostname from one server.</li>
+ * <li><b>couchbase.bucket=default</b> The bucket name to use./li>
+ * <li><b>couchbase.password=</b> The password of the bucket.</li>
+ * <li><b>couchbase.syncMutationResponse=true</b> If mutations should wait for the response to complete.</li>
+ * <li><b>couchbase.persistTo=0</b> Persistence durability requirement</li>
+ * <li><b>couchbase.replicateTo=0</b> Replication durability requirement</li>
+ * <li><b>couchbase.upsert=false</b> Use upsert instead of insert or replace.</li>
+ * </ul>
+ *
+ * @author Michael Nitschinger
+ */
 public class Couchbase2Client extends DB {
 
     public static final String HOST_PROPERTY = "couchbase.host";
@@ -82,6 +117,8 @@ public class Couchbase2Client extends DB {
             if (loaded == null) {
                 return Status.NOT_FOUND;
             }
+
+            fields = fields == null || fields.isEmpty() ? loaded.content().getNames() : fields;
             for (String field : fields) {
                 result.put(field, new StringByteIterator(loaded.content().getString(field)));
             }
@@ -184,34 +221,39 @@ public class Couchbase2Client extends DB {
     @Override
     public Status scan(String table, String startkey, int recordcount, Set<String> fields,
         Vector<HashMap<String, ByteIterator>> result) {
+        try {
+            String query = "SELECT " + joinSet(bucketName, fields)
+                + " FROM `" + bucketName + "`"
+                + " WHERE meta().id > '" + formatId(table, startkey) + "'"
+                + " LIMIT " + recordcount;
 
-        String query = "SELECT " + joinSet(fields)
-            + " FROM `" + bucketName + "`"
-            + " WHERE meta().id > " + formatId(table, startkey)
-            + " LIMIT " + recordcount;
+            N1qlQueryResult queryResult = bucket.query(N1qlQuery.simple(query));
+            if (!queryResult.parseSuccess() || !queryResult.finalSuccess()) {
+                System.err.println(query);
+                System.err.println(queryResult.errors());
+                return Status.ERROR;
+            }
 
-        N1qlQueryResult queryResult = bucket.query(N1qlQuery.simple(query));
-        if (!queryResult.parseSuccess() || !queryResult.finalSuccess()) {
-            System.err.println(queryResult.errors());
+            boolean allFields = fields == null || fields.isEmpty();
+            for (N1qlQueryRow row : queryResult) {
+                JsonObject value = row.value();
+                HashMap<String, ByteIterator> tuple = new HashMap<String, ByteIterator>();
+                fields = allFields ? value.getNames() : fields;
+                for (String field : fields) {
+                    tuple.put(field, new StringByteIterator(value.getString(field)));
+                }
+                result.add(tuple);
+            }
+            return Status.OK;
+        } catch (Exception ex) {
+            ex.printStackTrace();
             return Status.ERROR;
         }
-
-        boolean allFields = fields == null || fields.isEmpty();
-        for (N1qlQueryRow row : queryResult) {
-            JsonObject value = row.value();
-            HashMap<String, ByteIterator> tuple = new HashMap<String, ByteIterator>();
-            fields = allFields ? value.getNames() : fields;
-            for (String field : fields) {
-                tuple.put(field, new StringByteIterator(value.getString(field)));
-            }
-            result.add(tuple);
-        }
-        return Status.OK;
     }
 
-    private static String joinSet(final Set<String> fields) {
+    private static String joinSet(final String bucket, final Set<String> fields) {
         if (fields == null || fields.isEmpty()) {
-            return "*";
+            return "`" + bucket + "`.*";
         }
         StringBuilder builder = new StringBuilder();
         for (String f : fields) {
