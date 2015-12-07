@@ -191,7 +191,7 @@ public class CouchbaseClient extends DB {
       Object loaded = client.get(formattedKey);
 
       if (loaded == null) {
-        return Status.ERROR;
+        return Status.NOT_FOUND;
       }
 
       decode(loaded, fields, result);
@@ -285,7 +285,7 @@ public class CouchbaseClient extends DB {
    * @param key the actual key.
    * @return the formatted and prefixed key.
    */
-  private String formatKey(final String prefix, final String key) {
+  private static String formatKey(final String prefix, final String key) {
     return prefix + ":" + key;
   }
 
