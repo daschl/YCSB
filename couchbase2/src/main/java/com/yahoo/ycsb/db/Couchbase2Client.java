@@ -112,7 +112,7 @@ public class Couchbase2Client extends DB {
 
         }
 
-        query = "SELECT $1 FROM `" + bucketName + "` WHERE meta().id > '$2' LIMIT $3";
+        query = "SELECT $1 FROM `" + bucketName + "` WHERE meta().id >= '$2' ORDER BY meta().id LIMIT $3";
     }
 
     @Override
@@ -250,8 +250,8 @@ public class Couchbase2Client extends DB {
 
             for (N1qlQueryRow row : queryResult) {
                 JsonObject value = row.value();
-                HashMap<String, ByteIterator> tuple = new HashMap<String, ByteIterator>();
                 fields = allFields ? value.getNames() : fields;
+                HashMap<String, ByteIterator> tuple = new HashMap<String, ByteIterator>(fields.size());
                 for (String field : fields) {
                     tuple.put(field, new StringByteIterator(value.getString(field)));
                 }
