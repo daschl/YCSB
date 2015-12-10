@@ -23,7 +23,10 @@ import com.couchbase.client.java.CouchbaseCluster;
 import com.couchbase.client.java.PersistTo;
 import com.couchbase.client.java.ReplicateTo;
 import com.couchbase.client.java.document.JsonDocument;
+import com.couchbase.client.java.document.json.JsonArray;
 import com.couchbase.client.java.document.json.JsonObject;
+import com.couchbase.client.java.env.CouchbaseEnvironment;
+import com.couchbase.client.java.env.DefaultCouchbaseEnvironment;
 import com.couchbase.client.java.query.N1qlQuery;
 import com.couchbase.client.java.query.N1qlQueryResult;
 import com.couchbase.client.java.query.N1qlQueryRow;
@@ -73,12 +76,14 @@ public class Couchbase2Client extends DB {
     private String bucketName;
     private Bucket bucket;
     private Cluster cluster;
+    private CouchbaseEnvironment env;
 
     private boolean upsert;
     private PersistTo persistTo;
     private ReplicateTo replicateTo;
     private boolean syncMutResponse;
     private long kvTimeout;
+    private String query;
 
     @Override
     public void init() throws DBException {
@@ -94,7 +99,11 @@ public class Couchbase2Client extends DB {
         syncMutResponse = props.getProperty(SYNC_MUT_PROPERTY, "true").equals("true");
 
         try {
-            cluster = CouchbaseCluster.create(host);
+            env = DefaultCouchbaseEnvironment
+                .builder()
+                .queryEndpoints(5)
+                .build();
+            cluster = CouchbaseCluster.create(env, host);
             bucket = cluster.openBucket(bucketName, bucketPassword);
 
             kvTimeout = bucket.environment().kvTimeout();
@@ -102,11 +111,14 @@ public class Couchbase2Client extends DB {
             throw new DBException("Could not connect to Couchbase Bucket.", ex);
 
         }
+
+        query = "SELECT $1 FROM `" + bucketName + "` WHERE meta().id > '$2' LIMIT $3";
     }
 
     @Override
     public void cleanup() throws DBException {
         cluster.disconnect();
+        env.shutdownAsync().toBlocking().single();
     }
 
     @Override
@@ -222,12 +234,11 @@ public class Couchbase2Client extends DB {
     public Status scan(String table, String startkey, int recordcount, Set<String> fields,
         Vector<HashMap<String, ByteIterator>> result) {
         try {
-            String query = "SELECT " + joinSet(bucketName, fields)
-                + " FROM `" + bucketName + "`"
-                + " WHERE meta().id > '" + formatId(table, startkey) + "'"
-                + " LIMIT " + recordcount;
+            N1qlQueryResult queryResult = bucket.query(N1qlQuery.parameterized(
+                query,
+                JsonArray.from(joinSet(bucketName, fields), formatId(table, startkey), recordcount)
+            ));
 
-            N1qlQueryResult queryResult = bucket.query(N1qlQuery.simple(query));
             if (!queryResult.parseSuccess() || !queryResult.finalSuccess()) {
                 System.err.println(query);
                 System.err.println(queryResult.errors());
@@ -235,6 +246,8 @@ public class Couchbase2Client extends DB {
             }
 
             boolean allFields = fields == null || fields.isEmpty();
+            result.ensureCapacity(recordcount);
+
             for (N1qlQueryRow row : queryResult) {
                 JsonObject value = row.value();
                 HashMap<String, ByteIterator> tuple = new HashMap<String, ByteIterator>();
