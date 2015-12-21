@@ -195,16 +195,32 @@ public class Couchbase2Client extends DB {
 
     @Override
     public Status insert(String table, String key, HashMap<String, ByteIterator> values) {
-        if (upsert) {
-            return upsert(table, key, values);
-        }
-
         try {
-            waitForMutationResponse(bucket.async().insert(
-                JsonDocument.create(formatId(table, key), encodeIntoJson(values)),
-                persistTo,
-                replicateTo
-            ));
+            if (kv) {
+                if (upsert) {
+                    return upsert(table, key, values);
+                }
+
+                waitForMutationResponse(bucket.async().insert(
+                  JsonDocument.create(formatId(table, key), encodeIntoJson(values)),
+                  persistTo,
+                  replicateTo
+                ));
+            } else {
+                String insertQuery = "INSERT INTO `" + bucketName + "`(KEY,VALUE) VALUES ($1,$2)";
+
+                N1qlQueryResult queryResult = bucket.query(N1qlQuery.parameterized(
+                  insertQuery,
+                  JsonArray.from(formatId(table, key), encodeIntoJson(values)),
+                  N1qlParams.build().adhoc(adhoc)
+                ));
+
+                if (!queryResult.parseSuccess() || !queryResult.finalSuccess()) {
+                    System.err.println(insertQuery);
+                    System.err.println(queryResult.errors());
+                    return Status.ERROR;
+                }
+            }
             return Status.OK;
         } catch (Exception ex) {
             ex.printStackTrace();
@@ -214,11 +230,27 @@ public class Couchbase2Client extends DB {
 
     private Status upsert(String table, String key, HashMap<String, ByteIterator> values) {
         try {
-            waitForMutationResponse(bucket.async().upsert(
-                JsonDocument.create(formatId(table, key), encodeIntoJson(values)),
-                persistTo,
-                replicateTo
-            ));
+            if (kv) {
+                waitForMutationResponse(bucket.async().upsert(
+                  JsonDocument.create(formatId(table, key), encodeIntoJson(values)),
+                  persistTo,
+                  replicateTo
+                ));
+            } else {
+                String upsertQuery = "UPSERT INTO `" + bucketName + "`(KEY,VALUE) VALUES ($1,$2)";
+
+                N1qlQueryResult queryResult = bucket.query(N1qlQuery.parameterized(
+                  upsertQuery,
+                  JsonArray.from(formatId(table, key), encodeIntoJson(values)),
+                  N1qlParams.build().adhoc(adhoc)
+                ));
+
+                if (!queryResult.parseSuccess() || !queryResult.finalSuccess()) {
+                    System.err.println(upsertQuery);
+                    System.err.println(queryResult.errors());
+                    return Status.ERROR;
+                }
+            }
             return Status.OK;
         } catch (Exception ex) {
             ex.printStackTrace();
