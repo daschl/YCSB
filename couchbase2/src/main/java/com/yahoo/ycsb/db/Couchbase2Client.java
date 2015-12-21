@@ -40,6 +40,7 @@ import com.yahoo.ycsb.StringByteIterator;
 import rx.Observable;
 import rx.Subscriber;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
@@ -61,6 +62,7 @@ import java.util.concurrent.TimeUnit;
  * <li><b>couchbase.replicateTo=0</b> Replication durability requirement</li>
  * <li><b>couchbase.upsert=false</b> Use upsert instead of insert or replace.</li>
  * <li><b>couchbase.adhoc=false</b> If set to true, prepared statements are not used.</li>
+ * <li><b>couchbase.kv=true</b> If set to false, mutation operations will also be performed through N1QL.</li>
  * </ul>
  *
  * @author Michael Nitschinger
@@ -75,6 +77,7 @@ public class Couchbase2Client extends DB {
     public static final String REPLICATE_PROPERTY = "couchbase.replicateTo";
     public static final String UPSERT_PROPERTY = "couchbase.upsert";
     public static final String ADHOC_PROPOERTY = "couchbase.adhoc";
+    public static final String KV_PROPERTY = "couchbase.kv";
 
     private String bucketName;
     private Bucket bucket;
@@ -87,7 +90,7 @@ public class Couchbase2Client extends DB {
     private boolean syncMutResponse;
     private long kvTimeout;
     private boolean adhoc;
-    private String query;
+    private boolean kv;
 
     @Override
     public void init() throws DBException {
@@ -102,6 +105,7 @@ public class Couchbase2Client extends DB {
         replicateTo = parseReplicateTo(props.getProperty(REPLICATE_PROPERTY, "0"));
         syncMutResponse = props.getProperty(SYNC_MUT_PROPERTY, "true").equals("true");
         adhoc = props.getProperty(ADHOC_PROPOERTY, "false").equals("true");
+        kv = props.getProperty(KV_PROPERTY, "true").equals("true");
 
         try {
             env = DefaultCouchbaseEnvironment
@@ -116,8 +120,6 @@ public class Couchbase2Client extends DB {
             throw new DBException("Could not connect to Couchbase Bucket.", ex);
 
         }
-
-        query = "SELECT $1 FROM `" + bucketName + "` WHERE meta().id >= '$1' LIMIT $2";
     }
 
     @Override
@@ -130,14 +132,39 @@ public class Couchbase2Client extends DB {
     public Status read(final String table, final String key, Set<String> fields,
         final HashMap<String, ByteIterator> result) {
         try {
-            JsonDocument loaded = bucket.get(formatId(table, key));
-            if (loaded == null) {
-                return Status.NOT_FOUND;
+            JsonObject content;
+            if (kv) {
+                JsonDocument loaded = bucket.get(formatId(table, key));
+                if (loaded == null) {
+                    return Status.NOT_FOUND;
+                }
+                content = loaded.content();
+            } else {
+                String readQuery = "SELECT " + joinSet(bucketName, fields) + " FROM `"
+                  + bucketName + "` USE KEYS [$1]";
+                N1qlQueryResult queryResult = bucket.query(N1qlQuery.parameterized(
+                  readQuery,
+                  JsonArray.from(formatId(table, key)),
+                  N1qlParams.build().adhoc(adhoc)
+                ));
+
+                if (!queryResult.parseSuccess() || !queryResult.finalSuccess()) {
+                    System.err.println(readQuery);
+                    System.err.println(queryResult.errors());
+                    return Status.ERROR;
+                }
+
+                List<N1qlQueryRow> rows = queryResult.allRows();
+                if (rows.isEmpty()) {
+                    return Status.NOT_FOUND;
+                }
+
+                content = rows.get(0).value();
             }
 
-            fields = fields == null || fields.isEmpty() ? loaded.content().getNames() : fields;
+            fields = fields == null || fields.isEmpty() ? content.getNames() : fields;
             for (String field : fields) {
-                result.put(field, new StringByteIterator(loaded.content().getString(field)));
+                result.put(field, new StringByteIterator(content.getString(field)));
             }
             return Status.OK;
         } catch (Exception ex) {
@@ -239,14 +266,16 @@ public class Couchbase2Client extends DB {
     public Status scan(String table, String startkey, int recordcount, Set<String> fields,
         Vector<HashMap<String, ByteIterator>> result) {
         try {
+            String scanQuery = "SELECT " + joinSet(bucketName, fields) + " FROM `"
+              + bucketName + "` WHERE meta().id >= '$1' LIMIT $2";
             N1qlQueryResult queryResult = bucket.query(N1qlQuery.parameterized(
-                query,
-                JsonArray.from(joinSet(bucketName, fields), recordcount),
+                scanQuery,
+                JsonArray.from(formatId(table, startkey), recordcount),
                 N1qlParams.build().adhoc(adhoc)
             ));
 
             if (!queryResult.parseSuccess() || !queryResult.finalSuccess()) {
-                System.err.println(query);
+                System.err.println(scanQuery);
                 System.err.println(queryResult.errors());
                 return Status.ERROR;
             }
