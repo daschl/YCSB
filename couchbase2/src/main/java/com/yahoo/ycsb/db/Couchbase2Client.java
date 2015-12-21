@@ -60,6 +60,7 @@ import java.util.concurrent.TimeUnit;
  * <li><b>couchbase.persistTo=0</b> Persistence durability requirement</li>
  * <li><b>couchbase.replicateTo=0</b> Replication durability requirement</li>
  * <li><b>couchbase.upsert=false</b> Use upsert instead of insert or replace.</li>
+ * <li><b>couchbase.adhoc=false</b> If set to true, prepared statements are not used.</li>
  * </ul>
  *
  * @author Michael Nitschinger
@@ -73,6 +74,7 @@ public class Couchbase2Client extends DB {
     public static final String PERSIST_PROPERTY = "couchbase.persistTo";
     public static final String REPLICATE_PROPERTY = "couchbase.replicateTo";
     public static final String UPSERT_PROPERTY = "couchbase.upsert";
+    public static final String ADHOC_PROPOERTY = "couchbase.adhoc";
 
     private String bucketName;
     private Bucket bucket;
@@ -84,6 +86,7 @@ public class Couchbase2Client extends DB {
     private ReplicateTo replicateTo;
     private boolean syncMutResponse;
     private long kvTimeout;
+    private boolean adhoc;
     private String query;
 
     @Override
@@ -98,6 +101,7 @@ public class Couchbase2Client extends DB {
         persistTo = parsePersistTo(props.getProperty(PERSIST_PROPERTY, "0"));
         replicateTo = parseReplicateTo(props.getProperty(REPLICATE_PROPERTY, "0"));
         syncMutResponse = props.getProperty(SYNC_MUT_PROPERTY, "true").equals("true");
+        adhoc = props.getProperty(ADHOC_PROPOERTY, "false").equals("true");
 
         try {
             env = DefaultCouchbaseEnvironment
@@ -238,7 +242,7 @@ public class Couchbase2Client extends DB {
             N1qlQueryResult queryResult = bucket.query(N1qlQuery.parameterized(
                 query,
                 JsonArray.from(joinSet(bucketName, fields), recordcount),
-                N1qlParams.build().adhoc(false)
+                N1qlParams.build().adhoc(adhoc)
             ));
 
             if (!queryResult.parseSuccess() || !queryResult.finalSuccess()) {
