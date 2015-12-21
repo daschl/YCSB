@@ -27,6 +27,7 @@ import com.couchbase.client.java.document.json.JsonArray;
 import com.couchbase.client.java.document.json.JsonObject;
 import com.couchbase.client.java.env.CouchbaseEnvironment;
 import com.couchbase.client.java.env.DefaultCouchbaseEnvironment;
+import com.couchbase.client.java.query.N1qlParams;
 import com.couchbase.client.java.query.N1qlQuery;
 import com.couchbase.client.java.query.N1qlQueryResult;
 import com.couchbase.client.java.query.N1qlQueryRow;
@@ -112,7 +113,7 @@ public class Couchbase2Client extends DB {
 
         }
 
-        query = "SELECT $1 FROM `" + bucketName + "` WHERE meta().id >= '$2' ORDER BY meta().id LIMIT $3";
+        query = "SELECT $1 FROM `" + bucketName + "` WHERE meta().id >= '$1' LIMIT $2";
     }
 
     @Override
@@ -236,7 +237,8 @@ public class Couchbase2Client extends DB {
         try {
             N1qlQueryResult queryResult = bucket.query(N1qlQuery.parameterized(
                 query,
-                JsonArray.from(joinSet(bucketName, fields), formatId(table, startkey), recordcount)
+                JsonArray.from(joinSet(bucketName, fields), recordcount),
+                N1qlParams.build().adhoc(false)
             ));
 
             if (!queryResult.parseSuccess() || !queryResult.finalSuccess()) {
