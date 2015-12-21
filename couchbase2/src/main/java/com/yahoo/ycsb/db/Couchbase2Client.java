@@ -120,6 +120,10 @@ public class Couchbase2Client extends DB {
             throw new DBException("Could not connect to Couchbase Bucket.", ex);
 
         }
+
+        if (!kv && !syncMutResponse) {
+            throw new DBException("Not waiting for n1ql responses on mutation is not yet implemented.");
+        }
     }
 
     @Override
@@ -176,21 +180,51 @@ public class Couchbase2Client extends DB {
     @Override
     public Status update(final String table, final String key,
     final HashMap<String, ByteIterator> values) {
-        if (upsert) {
-            return upsert(table, key, values);
-        }
-
         try {
-            waitForMutationResponse(bucket.async().replace(
-                JsonDocument.create(formatId(table, key), encodeIntoJson(values)),
-                persistTo,
-                replicateTo
-            ));
+            if (kv) {
+                if (upsert) {
+                    return upsert(table, key, values);
+                }
+
+                waitForMutationResponse(bucket.async().replace(
+                  JsonDocument.create(formatId(table, key), encodeIntoJson(values)),
+                  persistTo,
+                  replicateTo
+                ));
+            } else {
+                String fields = encodeN1qlFields(values);
+                String updateQuery = "UPDATE `" + bucketName + "` USE KEYS [$1] SET " + fields;
+                
+                N1qlQueryResult queryResult = bucket.query(N1qlQuery.parameterized(
+                  updateQuery,
+                  JsonArray.from(formatId(table, key)),
+                  N1qlParams.build().adhoc(adhoc)
+                ));
+
+                if (!queryResult.parseSuccess() || !queryResult.finalSuccess()) {
+                    System.err.println(updateQuery);
+                    System.err.println(queryResult.errors());
+                    return Status.ERROR;
+                }
+            }
             return Status.OK;
         } catch (Exception ex) {
             ex.printStackTrace();
             return Status.ERROR;
         }
+    }
+
+    private static String encodeN1qlFields(final HashMap<String, ByteIterator> values) {
+        if (values.isEmpty()) {
+            return "";
+        }
+
+        StringBuilder sb = new StringBuilder();
+        for (Map.Entry<String, ByteIterator> entry : values.entrySet()) {
+            sb.append(entry.getKey()).append("=\"").append(entry.getValue().toString()).append("\",");
+        }
+        String toReturn = sb.toString();
+        return toReturn.substring(0, toReturn.length() - 1);
     }
 
     @Override
