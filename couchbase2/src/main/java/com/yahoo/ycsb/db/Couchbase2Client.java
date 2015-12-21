@@ -254,7 +254,22 @@ public class Couchbase2Client extends DB {
     @Override
     public Status delete(final String table, final String key) {
         try {
-            bucket.remove(formatId(table, key));
+            if (kv) {
+                bucket.remove(formatId(table, key));
+            } else {
+                String deleteQuery = "DELETE FROM `" + bucketName + "` USE KEYS [$1]";
+                N1qlQueryResult queryResult = bucket.query(N1qlQuery.parameterized(
+                  deleteQuery,
+                  JsonArray.from(formatId(table, key)),
+                  N1qlParams.build().adhoc(adhoc)
+                ));
+
+                if (!queryResult.parseSuccess() || !queryResult.finalSuccess()) {
+                    System.err.println(deleteQuery);
+                    System.err.println(queryResult.errors());
+                    return Status.ERROR;
+                }
+            }
             return Status.OK;
         } catch (Exception ex) {
             ex.printStackTrace();
