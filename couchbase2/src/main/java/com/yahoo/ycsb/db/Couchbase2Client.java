@@ -63,6 +63,7 @@ import java.util.concurrent.TimeUnit;
  * <li><b>couchbase.upsert=false</b> Use upsert instead of insert or replace.</li>
  * <li><b>couchbase.adhoc=false</b> If set to true, prepared statements are not used.</li>
  * <li><b>couchbase.kv=true</b> If set to false, mutation operations will also be performed through N1QL.</li>
+ * <li><b>couchbase.maxParallelism=1</b> The server parallelism for all n1ql queries.</li>
  * </ul>
  *
  * @author Michael Nitschinger
@@ -78,6 +79,7 @@ public class Couchbase2Client extends DB {
     public static final String UPSERT_PROPERTY = "couchbase.upsert";
     public static final String ADHOC_PROPOERTY = "couchbase.adhoc";
     public static final String KV_PROPERTY = "couchbase.kv";
+    public static final String MAX_PARALLEL_PROPERTY = "couchbase.maxParallelism";
 
     private String bucketName;
     private Bucket bucket;
@@ -91,6 +93,7 @@ public class Couchbase2Client extends DB {
     private long kvTimeout;
     private boolean adhoc;
     private boolean kv;
+    private int maxParallelism;
 
     @Override
     public void init() throws DBException {
@@ -106,6 +109,7 @@ public class Couchbase2Client extends DB {
         syncMutResponse = props.getProperty(SYNC_MUT_PROPERTY, "true").equals("true");
         adhoc = props.getProperty(ADHOC_PROPOERTY, "false").equals("true");
         kv = props.getProperty(KV_PROPERTY, "true").equals("true");
+        maxParallelism = Integer.parseInt(props.getProperty(MAX_PARALLEL_PROPERTY, "1"));
 
         try {
             env = DefaultCouchbaseEnvironment
@@ -149,7 +153,7 @@ public class Couchbase2Client extends DB {
                 N1qlQueryResult queryResult = bucket.query(N1qlQuery.parameterized(
                   readQuery,
                   JsonArray.from(formatId(table, key)),
-                  N1qlParams.build().adhoc(adhoc)
+                  N1qlParams.build().adhoc(adhoc).maxParallelism(maxParallelism)
                 ));
 
                 if (!queryResult.parseSuccess() || !queryResult.finalSuccess()) {
@@ -194,11 +198,11 @@ public class Couchbase2Client extends DB {
             } else {
                 String fields = encodeN1qlFields(values);
                 String updateQuery = "UPDATE `" + bucketName + "` USE KEYS [$1] SET " + fields;
-                
+
                 N1qlQueryResult queryResult = bucket.query(N1qlQuery.parameterized(
                   updateQuery,
                   JsonArray.from(formatId(table, key)),
-                  N1qlParams.build().adhoc(adhoc)
+                  N1qlParams.build().adhoc(adhoc).maxParallelism(maxParallelism)
                 ));
 
                 if (!queryResult.parseSuccess() || !queryResult.finalSuccess()) {
@@ -246,7 +250,7 @@ public class Couchbase2Client extends DB {
                 N1qlQueryResult queryResult = bucket.query(N1qlQuery.parameterized(
                   insertQuery,
                   JsonArray.from(formatId(table, key), encodeIntoJson(values)),
-                  N1qlParams.build().adhoc(adhoc)
+                  N1qlParams.build().adhoc(adhoc).maxParallelism(maxParallelism)
                 ));
 
                 if (!queryResult.parseSuccess() || !queryResult.finalSuccess()) {
@@ -276,7 +280,7 @@ public class Couchbase2Client extends DB {
                 N1qlQueryResult queryResult = bucket.query(N1qlQuery.parameterized(
                   upsertQuery,
                   JsonArray.from(formatId(table, key), encodeIntoJson(values)),
-                  N1qlParams.build().adhoc(adhoc)
+                  N1qlParams.build().adhoc(adhoc).maxParallelism(maxParallelism)
                 ));
 
                 if (!queryResult.parseSuccess() || !queryResult.finalSuccess()) {
@@ -327,7 +331,7 @@ public class Couchbase2Client extends DB {
                 N1qlQueryResult queryResult = bucket.query(N1qlQuery.parameterized(
                   deleteQuery,
                   JsonArray.from(formatId(table, key)),
-                  N1qlParams.build().adhoc(adhoc)
+                  N1qlParams.build().adhoc(adhoc).maxParallelism(maxParallelism)
                 ));
 
                 if (!queryResult.parseSuccess() || !queryResult.finalSuccess()) {
@@ -352,7 +356,7 @@ public class Couchbase2Client extends DB {
             N1qlQueryResult queryResult = bucket.query(N1qlQuery.parameterized(
                 scanQuery,
                 JsonArray.from(formatId(table, startkey), recordcount),
-                N1qlParams.build().adhoc(adhoc)
+                N1qlParams.build().adhoc(adhoc).maxParallelism(maxParallelism)
             ));
 
             if (!queryResult.parseSuccess() || !queryResult.finalSuccess()) {
