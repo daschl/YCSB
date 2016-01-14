@@ -17,6 +17,8 @@
 
 package com.yahoo.ycsb.db;
 
+import com.couchbase.client.core.logging.CouchbaseLogger;
+import com.couchbase.client.core.logging.CouchbaseLoggerFactory;
 import com.couchbase.client.java.Bucket;
 import com.couchbase.client.java.Cluster;
 import com.couchbase.client.java.CouchbaseCluster;
@@ -70,6 +72,8 @@ import java.util.concurrent.TimeUnit;
  */
 public class Couchbase2Client extends DB {
 
+    private static final CouchbaseLogger LOGGER = CouchbaseLoggerFactory.getInstance(Couchbase2Client.class);
+
     private static final Object INIT_COORDINATOR = new Object();
     private static volatile int NUM_THREADS = 0;
     private static volatile CouchbaseEnvironment ENV = null;
@@ -96,12 +100,13 @@ public class Couchbase2Client extends DB {
     private boolean adhoc;
     private boolean kv;
     private int maxParallelism;
+    private String host;
 
     @Override
     public void init() throws DBException {
         Properties props = getProperties();
 
-        String host = props.getProperty(HOST_PROPERTY, "127.0.0.1");
+        host = props.getProperty(HOST_PROPERTY, "127.0.0.1");
         bucketName = props.getProperty(BUCKET_PROPERTY, "default");
         String bucketPassword = props.getProperty(PASSWORD_PROPERTY, "");
 
@@ -127,6 +132,7 @@ public class Couchbase2Client extends DB {
                 }
                 if (BUCKET == null) {
                     BUCKET = CLUSTER.openBucket(bucketName, bucketPassword);
+                    logSettings();
                 }
             }
 
@@ -139,6 +145,23 @@ public class Couchbase2Client extends DB {
         if (!kv && !syncMutResponse) {
             throw new DBException("Not waiting for n1ql responses on mutation is not yet implemented.");
         }
+    }
+
+    private void logSettings() {
+        StringBuilder sb = new StringBuilder();
+
+        sb.append("host = " + host);
+        sb.append(", bucket = " + bucketName);
+        sb.append(", upsert = " + upsert);
+        sb.append(", persistTo = " + persistTo);
+        sb.append(", replicateTo = " + replicateTo);
+        sb.append(", syncMutResponse = " + syncMutResponse);
+        sb.append(", adhoc = " + adhoc);
+        sb.append(", kv = " + kv);
+        sb.append(", maxParallelism = " + maxParallelism);
+        sb.append(", kvTimeout = " + kvTimeout);
+
+        LOGGER.info("=== Using Params: " + sb.toString());
     }
 
     @Override
