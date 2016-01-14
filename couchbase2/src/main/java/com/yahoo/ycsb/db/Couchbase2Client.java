@@ -90,6 +90,8 @@ public class Couchbase2Client extends DB {
     public static final String ADHOC_PROPOERTY = "couchbase.adhoc";
     public static final String KV_PROPERTY = "couchbase.kv";
     public static final String MAX_PARALLEL_PROPERTY = "couchbase.maxParallelism";
+    public static final String KV_ENDPOINTS = "couchbase.kvEndpoints";
+    public static final String QUERY_ENDPOINTS = "couchbase.queryEndpoints";
 
     private String bucketName;
     private boolean upsert;
@@ -101,6 +103,8 @@ public class Couchbase2Client extends DB {
     private boolean kv;
     private int maxParallelism;
     private String host;
+    private int kvEndpoints;
+    private int queryEndpoints;
 
     @Override
     public void init() throws DBException {
@@ -117,6 +121,8 @@ public class Couchbase2Client extends DB {
         adhoc = props.getProperty(ADHOC_PROPOERTY, "false").equals("true");
         kv = props.getProperty(KV_PROPERTY, "true").equals("true");
         maxParallelism = Integer.parseInt(props.getProperty(MAX_PARALLEL_PROPERTY, "1"));
+        kvEndpoints = Integer.parseInt(props.getProperty(KV_ENDPOINTS, "1"));
+        queryEndpoints = Integer.parseInt(props.getProperty(QUERY_ENDPOINTS, "5"));
 
         try {
             synchronized (INIT_COORDINATOR) {
@@ -124,7 +130,8 @@ public class Couchbase2Client extends DB {
                 if (ENV == null) {
                     ENV = DefaultCouchbaseEnvironment
                         .builder()
-                        .queryEndpoints(5)
+                        .queryEndpoints(queryEndpoints)
+                        .kvEndpoints(kvEndpoints)
                         .build();
                 }
                 if (CLUSTER == null) {
@@ -139,7 +146,6 @@ public class Couchbase2Client extends DB {
             kvTimeout = BUCKET.environment().kvTimeout();
         } catch (Exception ex) {
             throw new DBException("Could not connect to Couchbase Bucket.", ex);
-
         }
 
         if (!kv && !syncMutResponse) {
@@ -159,6 +165,8 @@ public class Couchbase2Client extends DB {
         sb.append(", adhoc = " + adhoc);
         sb.append(", kv = " + kv);
         sb.append(", maxParallelism = " + maxParallelism);
+        sb.append(", queryEndpoints = " + queryEndpoints);
+        sb.append(", kvEndpoints = " + kvEndpoints);
 
         LOGGER.info("=== Using Params: " + sb.toString());
     }
