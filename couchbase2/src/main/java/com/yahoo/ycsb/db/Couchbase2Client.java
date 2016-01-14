@@ -159,7 +159,6 @@ public class Couchbase2Client extends DB {
         sb.append(", adhoc = " + adhoc);
         sb.append(", kv = " + kv);
         sb.append(", maxParallelism = " + maxParallelism);
-        sb.append(", kvTimeout = " + kvTimeout);
 
         LOGGER.info("=== Using Params: " + sb.toString());
     }
