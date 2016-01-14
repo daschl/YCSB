@@ -66,6 +66,8 @@ import java.util.concurrent.TimeUnit;
  * <li><b>couchbase.adhoc=false</b> If set to true, prepared statements are not used.</li>
  * <li><b>couchbase.kv=true</b> If set to false, mutation operations will also be performed through N1QL.</li>
  * <li><b>couchbase.maxParallelism=1</b> The server parallelism for all n1ql queries.</li>
+ * <li><b>couchbase.kvEndpoints=1</b> The number of KV sockets to open per server.</li>
+ * <li><b>couchbase.queryEndpoints=5</b> The number of N1QL Query sockets to open per server.</li>
  * </ul>
  *
  * @author Michael Nitschinger
