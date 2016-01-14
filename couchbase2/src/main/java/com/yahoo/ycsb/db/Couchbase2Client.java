@@ -70,6 +70,12 @@ import java.util.concurrent.TimeUnit;
  */
 public class Couchbase2Client extends DB {
 
+    private static final Object INIT_COORDINATOR = new Object();
+    private static volatile int NUM_THREADS = 0;
+    private static volatile CouchbaseEnvironment ENV = null;
+    private static volatile Cluster CLUSTER = null;
+    private static volatile Bucket BUCKET = null;
+
     public static final String HOST_PROPERTY = "couchbase.host";
     public static final String BUCKET_PROPERTY = "couchbase.bucket";
     public static final String PASSWORD_PROPERTY = "couchbase.password";
@@ -82,10 +88,6 @@ public class Couchbase2Client extends DB {
     public static final String MAX_PARALLEL_PROPERTY = "couchbase.maxParallelism";
 
     private String bucketName;
-    private Bucket bucket;
-    private Cluster cluster;
-    private CouchbaseEnvironment env;
-
     private boolean upsert;
     private PersistTo persistTo;
     private ReplicateTo replicateTo;
@@ -112,14 +114,23 @@ public class Couchbase2Client extends DB {
         maxParallelism = Integer.parseInt(props.getProperty(MAX_PARALLEL_PROPERTY, "1"));
 
         try {
-            env = DefaultCouchbaseEnvironment
-                .builder()
-                .queryEndpoints(5)
-                .build();
-            cluster = CouchbaseCluster.create(env, host);
-            bucket = cluster.openBucket(bucketName, bucketPassword);
+            synchronized (INIT_COORDINATOR) {
+                NUM_THREADS++;
+                if (ENV == null) {
+                    ENV = DefaultCouchbaseEnvironment
+                        .builder()
+                        .queryEndpoints(5)
+                        .build();
+                }
+                if (CLUSTER == null) {
+                    CLUSTER = CouchbaseCluster.create(ENV, host);
+                }
+                if (BUCKET == null) {
+                    BUCKET = CLUSTER.openBucket(bucketName, bucketPassword);
+                }
+            }
 
-            kvTimeout = bucket.environment().kvTimeout();
+            kvTimeout = BUCKET.environment().kvTimeout();
         } catch (Exception ex) {
             throw new DBException("Could not connect to Couchbase Bucket.", ex);
 
@@ -132,8 +143,13 @@ public class Couchbase2Client extends DB {
 
     @Override
     public void cleanup() throws DBException {
-        cluster.disconnect();
-        env.shutdownAsync().toBlocking().single();
+        synchronized (INIT_COORDINATOR) {
+            NUM_THREADS--;
+            if (NUM_THREADS == 0) {
+                CLUSTER.disconnect();
+                ENV.shutdownAsync().toBlocking().single();
+            }
+        }
     }
 
     @Override
@@ -142,7 +158,7 @@ public class Couchbase2Client extends DB {
         try {
             JsonObject content;
             if (kv) {
-                JsonDocument loaded = bucket.get(formatId(table, key));
+                JsonDocument loaded = BUCKET.get(formatId(table, key));
                 if (loaded == null) {
                     return Status.NOT_FOUND;
                 }
@@ -150,7 +166,7 @@ public class Couchbase2Client extends DB {
             } else {
                 String readQuery = "SELECT " + joinSet(bucketName, fields) + " FROM `"
                   + bucketName + "` USE KEYS [$1]";
-                N1qlQueryResult queryResult = bucket.query(N1qlQuery.parameterized(
+                N1qlQueryResult queryResult = BUCKET.query(N1qlQuery.parameterized(
                   readQuery,
                   JsonArray.from(formatId(table, key)),
                   N1qlParams.build().adhoc(adhoc).maxParallelism(maxParallelism)
@@ -190,7 +206,7 @@ public class Couchbase2Client extends DB {
                     return upsert(table, key, values);
                 }
 
-                waitForMutationResponse(bucket.async().replace(
+                waitForMutationResponse(BUCKET.async().replace(
                   JsonDocument.create(formatId(table, key), encodeIntoJson(values)),
                   persistTo,
                   replicateTo
@@ -199,7 +215,7 @@ public class Couchbase2Client extends DB {
                 String fields = encodeN1qlFields(values);
                 String updateQuery = "UPDATE `" + bucketName + "` USE KEYS [$1] SET " + fields;
 
-                N1qlQueryResult queryResult = bucket.query(N1qlQuery.parameterized(
+                N1qlQueryResult queryResult = BUCKET.query(N1qlQuery.parameterized(
                   updateQuery,
                   JsonArray.from(formatId(table, key)),
                   N1qlParams.build().adhoc(adhoc).maxParallelism(maxParallelism)
@@ -239,7 +255,7 @@ public class Couchbase2Client extends DB {
                     return upsert(table, key, values);
                 }
 
-                waitForMutationResponse(bucket.async().insert(
+                waitForMutationResponse(BUCKET.async().insert(
                   JsonDocument.create(formatId(table, key), encodeIntoJson(values)),
                   persistTo,
                   replicateTo
@@ -247,7 +263,7 @@ public class Couchbase2Client extends DB {
             } else {
                 String insertQuery = "INSERT INTO `" + bucketName + "`(KEY,VALUE) VALUES ($1,$2)";
 
-                N1qlQueryResult queryResult = bucket.query(N1qlQuery.parameterized(
+                N1qlQueryResult queryResult = BUCKET.query(N1qlQuery.parameterized(
                   insertQuery,
                   JsonArray.from(formatId(table, key), encodeIntoJson(values)),
                   N1qlParams.build().adhoc(adhoc).maxParallelism(maxParallelism)
@@ -269,7 +285,7 @@ public class Couchbase2Client extends DB {
     private Status upsert(String table, String key, HashMap<String, ByteIterator> values) {
         try {
             if (kv) {
-                waitForMutationResponse(bucket.async().upsert(
+                waitForMutationResponse(BUCKET.async().upsert(
                   JsonDocument.create(formatId(table, key), encodeIntoJson(values)),
                   persistTo,
                   replicateTo
@@ -277,7 +293,7 @@ public class Couchbase2Client extends DB {
             } else {
                 String upsertQuery = "UPSERT INTO `" + bucketName + "`(KEY,VALUE) VALUES ($1,$2)";
 
-                N1qlQueryResult queryResult = bucket.query(N1qlQuery.parameterized(
+                N1qlQueryResult queryResult = BUCKET.query(N1qlQuery.parameterized(
                   upsertQuery,
                   JsonArray.from(formatId(table, key), encodeIntoJson(values)),
                   N1qlParams.build().adhoc(adhoc).maxParallelism(maxParallelism)
@@ -325,10 +341,10 @@ public class Couchbase2Client extends DB {
     public Status delete(final String table, final String key) {
         try {
             if (kv) {
-                bucket.remove(formatId(table, key));
+                BUCKET.remove(formatId(table, key));
             } else {
                 String deleteQuery = "DELETE FROM `" + bucketName + "` USE KEYS [$1]";
-                N1qlQueryResult queryResult = bucket.query(N1qlQuery.parameterized(
+                N1qlQueryResult queryResult = BUCKET.query(N1qlQuery.parameterized(
                   deleteQuery,
                   JsonArray.from(formatId(table, key)),
                   N1qlParams.build().adhoc(adhoc).maxParallelism(maxParallelism)
@@ -353,7 +369,7 @@ public class Couchbase2Client extends DB {
         try {
             String scanQuery = "SELECT " + joinSet(bucketName, fields) + " FROM `"
               + bucketName + "` WHERE meta().id >= '$1' LIMIT $2";
-            N1qlQueryResult queryResult = bucket.query(N1qlQuery.parameterized(
+            N1qlQueryResult queryResult = BUCKET.query(N1qlQuery.parameterized(
                 scanQuery,
                 JsonArray.from(formatId(table, startkey), recordcount),
                 N1qlParams.build().adhoc(adhoc).maxParallelism(maxParallelism)
