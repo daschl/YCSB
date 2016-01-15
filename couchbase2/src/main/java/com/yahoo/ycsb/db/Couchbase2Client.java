@@ -220,7 +220,8 @@ public class Couchbase2Client extends DB {
 
             fields = fields == null || fields.isEmpty() ? content.getNames() : fields;
             for (String field : fields) {
-                result.put(field, new StringByteIterator(content.getString(field)));
+                Object value = content.get(field);
+                result.put(field, new StringByteIterator(value != null ? value.toString() : ""));
             }
             return Status.OK;
         } catch (Exception ex) {
@@ -273,7 +274,9 @@ public class Couchbase2Client extends DB {
 
         StringBuilder sb = new StringBuilder();
         for (Map.Entry<String, ByteIterator> entry : values.entrySet()) {
-            sb.append(entry.getKey()).append("=\"").append(entry.getValue().toString()).append("\",");
+            String raw = entry.getValue().toString();
+            String escaped = raw.replace("\"", "\\\"").replace("\'", "\\\'");
+            sb.append(entry.getKey()).append("=\"").append(escaped).append("\" ");
         }
         String toReturn = sb.toString();
         return toReturn.substring(0, toReturn.length() - 1);
