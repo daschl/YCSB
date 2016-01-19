@@ -284,12 +284,12 @@ public class Couchbase2Client extends DB {
 
     @Override
     public Status insert(String table, String key, HashMap<String, ByteIterator> values) {
+        if (upsert) {
+            return upsert(table, key, values);
+        }
+
         try {
             if (kv) {
-                if (upsert) {
-                    return upsert(table, key, values);
-                }
-
                 waitForMutationResponse(BUCKET.async().insert(
                   JsonDocument.create(formatId(table, key), encodeIntoJson(values)),
                   persistTo,
