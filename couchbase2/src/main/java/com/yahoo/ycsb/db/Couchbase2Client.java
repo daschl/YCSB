@@ -216,6 +216,9 @@ public class Couchbase2Client extends DB {
                 }
 
                 content = rows.get(0).value();
+                if (fields == null) {
+                    content = content.getObject(bucketName);
+                }
             }
 
             fields = fields == null || fields.isEmpty() ? content.getNames() : fields;
@@ -421,9 +424,12 @@ public class Couchbase2Client extends DB {
 
             for (N1qlQueryRow row : queryResult) {
                 JsonObject value = row.value();
-                fields = allFields ? value.getNames() : fields;
-                HashMap<String, ByteIterator> tuple = new HashMap<String, ByteIterator>(fields.size());
-                for (String field : fields) {
+                if (fields == null) {
+                    value = value.getObject(bucketName);
+                }
+                Set<String> f = allFields ? value.getNames() : fields;
+                HashMap<String, ByteIterator> tuple = new HashMap<String, ByteIterator>(f.size());
+                for (String field : f) {
                     tuple.put(field, new StringByteIterator(value.getString(field)));
                 }
                 result.add(tuple);
@@ -437,7 +443,7 @@ public class Couchbase2Client extends DB {
 
     private static String joinSet(final String bucket, final Set<String> fields) {
         if (fields == null || fields.isEmpty()) {
-            return "`" + bucket + "`.*";
+            return "*";
         }
         StringBuilder builder = new StringBuilder();
         for (String f : fields) {
