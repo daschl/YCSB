@@ -174,17 +174,6 @@ public class Couchbase2Client extends DB {
     }
 
     @Override
-    public void cleanup() throws DBException {
-        synchronized (INIT_COORDINATOR) {
-            NUM_THREADS--;
-            if (NUM_THREADS == 0) {
-                CLUSTER.disconnect();
-                ENV.shutdownAsync().toBlocking().single();
-            }
-        }
-    }
-
-    @Override
     public Status read(final String table, final String key, Set<String> fields,
         final HashMap<String, ByteIterator> result) {
         try {
