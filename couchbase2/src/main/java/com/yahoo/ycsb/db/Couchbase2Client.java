@@ -1,12 +1,12 @@
 /**
  * Copyright (c) 2013 Yahoo! Inc. All rights reserved.
- *
+ * <p>
  * Licensed under the Apache License, Version 2.0 (the "License"); you
  * may not use this file except in compliance with the License. You
  * may obtain a copy of the License at
- *
+ * <p>
  * http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p>
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
@@ -78,453 +78,465 @@ import java.util.concurrent.TimeUnit;
  */
 public class Couchbase2Client extends DB {
 
-    private static final CouchbaseLogger LOGGER = CouchbaseLoggerFactory.getInstance(Couchbase2Client.class);
+  private static final CouchbaseLogger LOGGER = CouchbaseLoggerFactory.getInstance(Couchbase2Client.class);
 
-    private static final Object INIT_COORDINATOR = new Object();
-    private static volatile CouchbaseEnvironment ENV = null;
-    private static volatile Cluster CLUSTER = null;
-    private static volatile Bucket BUCKET = null;
+  private static final Object INIT_COORDINATOR = new Object();
+  private static volatile CouchbaseEnvironment env = null;
+  private static volatile Cluster cluster = null;
+  private static volatile Bucket bucket = null;
 
-    private static final String HOST_PROPERTY = "couchbase.host";
-    private static final String BUCKET_PROPERTY = "couchbase.bucket";
-    private static final String PASSWORD_PROPERTY = "couchbase.password";
-    private static final String SYNC_MUT_PROPERTY = "couchbase.syncMutationResponse";
-    private static final String PERSIST_PROPERTY = "couchbase.persistTo";
-    private static final String REPLICATE_PROPERTY = "couchbase.replicateTo";
-    private static final String UPSERT_PROPERTY = "couchbase.upsert";
-    private static final String ADHOC_PROPOERTY = "couchbase.adhoc";
-    private static final String KV_PROPERTY = "couchbase.kv";
-    private static final String MAX_PARALLEL_PROPERTY = "couchbase.maxParallelism";
-    private static final String KV_ENDPOINTS = "couchbase.kvEndpoints";
-    private static final String QUERY_ENDPOINTS = "couchbase.queryEndpoints";
+  private static final String HOST_PROPERTY = "couchbase.host";
+  private static final String BUCKET_PROPERTY = "couchbase.bucket";
+  private static final String PASSWORD_PROPERTY = "couchbase.password";
+  private static final String SYNC_MUT_PROPERTY = "couchbase.syncMutationResponse";
+  private static final String PERSIST_PROPERTY = "couchbase.persistTo";
+  private static final String REPLICATE_PROPERTY = "couchbase.replicateTo";
+  private static final String UPSERT_PROPERTY = "couchbase.upsert";
+  private static final String ADHOC_PROPOERTY = "couchbase.adhoc";
+  private static final String KV_PROPERTY = "couchbase.kv";
+  private static final String MAX_PARALLEL_PROPERTY = "couchbase.maxParallelism";
+  private static final String KV_ENDPOINTS = "couchbase.kvEndpoints";
+  private static final String QUERY_ENDPOINTS = "couchbase.queryEndpoints";
 
-    private String bucketName;
-    private boolean upsert;
-    private PersistTo persistTo;
-    private ReplicateTo replicateTo;
-    private boolean syncMutResponse;
-    private long kvTimeout;
-    private boolean adhoc;
-    private boolean kv;
-    private int maxParallelism;
-    private String host;
-    private int kvEndpoints;
-    private int queryEndpoints;
+  private String bucketName;
+  private boolean upsert;
+  private PersistTo persistTo;
+  private ReplicateTo replicateTo;
+  private boolean syncMutResponse;
+  private long kvTimeout;
+  private boolean adhoc;
+  private boolean kv;
+  private int maxParallelism;
+  private String host;
+  private int kvEndpoints;
+  private int queryEndpoints;
 
-    @Override
-    public void init() throws DBException {
-        Properties props = getProperties();
+  @Override
+  public void init() throws DBException {
+    Properties props = getProperties();
 
-        host = props.getProperty(HOST_PROPERTY, "127.0.0.1");
-        bucketName = props.getProperty(BUCKET_PROPERTY, "default");
-        String bucketPassword = props.getProperty(PASSWORD_PROPERTY, "");
+    host = props.getProperty(HOST_PROPERTY, "127.0.0.1");
+    bucketName = props.getProperty(BUCKET_PROPERTY, "default");
+    String bucketPassword = props.getProperty(PASSWORD_PROPERTY, "");
 
-        upsert = props.getProperty(UPSERT_PROPERTY, "false").equals("true");
-        persistTo = parsePersistTo(props.getProperty(PERSIST_PROPERTY, "0"));
-        replicateTo = parseReplicateTo(props.getProperty(REPLICATE_PROPERTY, "0"));
-        syncMutResponse = props.getProperty(SYNC_MUT_PROPERTY, "true").equals("true");
-        adhoc = props.getProperty(ADHOC_PROPOERTY, "false").equals("true");
-        kv = props.getProperty(KV_PROPERTY, "true").equals("true");
-        maxParallelism = Integer.parseInt(props.getProperty(MAX_PARALLEL_PROPERTY, "1"));
-        kvEndpoints = Integer.parseInt(props.getProperty(KV_ENDPOINTS, "1"));
-        queryEndpoints = Integer.parseInt(props.getProperty(QUERY_ENDPOINTS, "5"));
+    upsert = props.getProperty(UPSERT_PROPERTY, "false").equals("true");
+    persistTo = parsePersistTo(props.getProperty(PERSIST_PROPERTY, "0"));
+    replicateTo = parseReplicateTo(props.getProperty(REPLICATE_PROPERTY, "0"));
+    syncMutResponse = props.getProperty(SYNC_MUT_PROPERTY, "true").equals("true");
+    adhoc = props.getProperty(ADHOC_PROPOERTY, "false").equals("true");
+    kv = props.getProperty(KV_PROPERTY, "true").equals("true");
+    maxParallelism = Integer.parseInt(props.getProperty(MAX_PARALLEL_PROPERTY, "1"));
+    kvEndpoints = Integer.parseInt(props.getProperty(KV_ENDPOINTS, "1"));
+    queryEndpoints = Integer.parseInt(props.getProperty(QUERY_ENDPOINTS, "5"));
 
-        try {
-            synchronized (INIT_COORDINATOR) {
-                if (ENV == null) {
-                    ENV = DefaultCouchbaseEnvironment
-                        .builder()
-                        .queryEndpoints(queryEndpoints)
-                        .kvEndpoints(kvEndpoints)
-                        .build();
-                }
-                if (CLUSTER == null) {
-                    CLUSTER = CouchbaseCluster.create(ENV, host);
-                }
-                if (BUCKET == null) {
-                    BUCKET = CLUSTER.openBucket(bucketName, bucketPassword);
-                    logSettings();
-                }
-            }
-
-            kvTimeout = BUCKET.environment().kvTimeout();
-        } catch (Exception ex) {
-            throw new DBException("Could not connect to Couchbase Bucket.", ex);
+    try {
+      synchronized (INIT_COORDINATOR) {
+        if (env == null) {
+          env = DefaultCouchbaseEnvironment
+            .builder()
+            .queryEndpoints(queryEndpoints)
+            .kvEndpoints(kvEndpoints)
+            .build();
         }
-
-        if (!kv && !syncMutResponse) {
-            throw new DBException("Not waiting for n1ql responses on mutation is not yet implemented.");
+        if (cluster == null) {
+          cluster = CouchbaseCluster.create(env, host);
         }
+        if (bucket == null) {
+          bucket = cluster.openBucket(bucketName, bucketPassword);
+          logSettings();
+        }
+      }
+
+      kvTimeout = bucket.environment().kvTimeout();
+    } catch (Exception ex) {
+      throw new DBException("Could not connect to Couchbase Bucket.", ex);
     }
 
-    private void logSettings() {
-        StringBuilder sb = new StringBuilder();
-
-        sb.append("host = ").append(host);
-        sb.append(", bucket = ").append(bucketName);
-        sb.append(", upsert = ").append(upsert);
-        sb.append(", persistTo = ").append(persistTo);
-        sb.append(", replicateTo = ").append(replicateTo);
-        sb.append(", syncMutResponse = ").append(syncMutResponse);
-        sb.append(", adhoc = ").append(adhoc);
-        sb.append(", kv = ").append(kv);
-        sb.append(", maxParallelism = ").append(maxParallelism);
-        sb.append(", queryEndpoints = ").append(queryEndpoints);
-        sb.append(", kvEndpoints = ").append(kvEndpoints);
-        sb.append(", queryEndpoints = ").append(queryEndpoints);
-
-        LOGGER.info("=== Using Params: " + sb.toString());
+    if (!kv && !syncMutResponse) {
+      throw new DBException("Not waiting for n1ql responses on mutation is not yet implemented.");
     }
+  }
 
-    @Override
-    public Status read(final String table, final String key, Set<String> fields,
-        final HashMap<String, ByteIterator> result) {
-        try {
-            JsonObject content;
-            if (kv) {
-              RawJsonDocument loaded = BUCKET.get(formatId(table, key), RawJsonDocument.class);
-              if (loaded == null) {
-                  return Status.NOT_FOUND;
-              }
-              decode(loaded.content(), fields, result);
-              return Status.OK;
-            } else {
-                String readQuery = "SELECT " + joinSet(fields) + " FROM `"
-                  + bucketName + "` USE KEYS [$1]";
-                N1qlQueryResult queryResult = BUCKET.query(N1qlQuery.parameterized(
-                  readQuery,
-                  JsonArray.from(formatId(table, key)),
-                  N1qlParams.build().adhoc(adhoc).maxParallelism(maxParallelism)
-                ));
+  private void logSettings() {
+    StringBuilder sb = new StringBuilder();
 
-                if (!queryResult.parseSuccess() || !queryResult.finalSuccess()) {
-                    System.err.println(readQuery);
-                    System.err.println(queryResult.errors());
-                    return Status.ERROR;
-                }
+    sb.append("host = ").append(host);
+    sb.append(", bucket = ").append(bucketName);
+    sb.append(", upsert = ").append(upsert);
+    sb.append(", persistTo = ").append(persistTo);
+    sb.append(", replicateTo = ").append(replicateTo);
+    sb.append(", syncMutResponse = ").append(syncMutResponse);
+    sb.append(", adhoc = ").append(adhoc);
+    sb.append(", kv = ").append(kv);
+    sb.append(", maxParallelism = ").append(maxParallelism);
+    sb.append(", queryEndpoints = ").append(queryEndpoints);
+    sb.append(", kvEndpoints = ").append(kvEndpoints);
+    sb.append(", queryEndpoints = ").append(queryEndpoints);
 
-                List<N1qlQueryRow> rows = queryResult.allRows();
-                if (rows.isEmpty()) {
-                    return Status.NOT_FOUND;
-                }
+    LOGGER.info("=== Using Params: " + sb.toString());
+  }
 
-                content = rows.get(0).value();
-                if (fields == null) {
-                    content = content.getObject(bucketName);
-                }
-            }
-
-            fields = fields == null || fields.isEmpty() ? content.getNames() : fields;
-            for (String field : fields) {
-                Object value = content.get(field);
-                result.put(field, new StringByteIterator(value != null ? value.toString() : ""));
-            }
-            return Status.OK;
-        } catch (Exception ex) {
-            ex.printStackTrace();
-            return Status.ERROR;
+  @Override
+  public Status read(final String table, final String key, Set<String> fields,
+                     final HashMap<String, ByteIterator> result) {
+    try {
+      JsonObject content;
+      if (kv) {
+        RawJsonDocument loaded = bucket.get(formatId(table, key), RawJsonDocument.class);
+        if (loaded == null) {
+          return Status.NOT_FOUND;
         }
-    }
+        decode(loaded.content(), fields, result);
+        return Status.OK;
+      } else {
+        String readQuery = "SELECT " + joinSet(fields) + " FROM `"
+            + bucketName + "` USE KEYS [$1]";
+        N1qlQueryResult queryResult = bucket.query(N1qlQuery.parameterized(
+            readQuery,
+            JsonArray.from(formatId(table, key)),
+            N1qlParams.build().adhoc(adhoc).maxParallelism(maxParallelism)
+        ));
 
-    @Override
-    public Status update(final String table, final String key,
-    final HashMap<String, ByteIterator> values) {
-        try {
-            if (kv) {
-                if (upsert) {
-                    return upsert(table, key, values);
-                }
-
-                waitForMutationResponse(BUCKET.async().replace(
-                  RawJsonDocument.create(formatId(table, key), encode(values)),
-                  persistTo,
-                  replicateTo
-                ));
-            } else {
-                String fields = encodeN1qlFields(values);
-                String updateQuery = "UPDATE `" + bucketName + "` USE KEYS [$1] SET " + fields;
-
-                N1qlQueryResult queryResult = BUCKET.query(N1qlQuery.parameterized(
-                  updateQuery,
-                  JsonArray.from(formatId(table, key)),
-                  N1qlParams.build().adhoc(adhoc).maxParallelism(maxParallelism)
-                ));
-
-                if (!queryResult.parseSuccess() || !queryResult.finalSuccess()) {
-                    System.err.println(updateQuery);
-                    System.err.println(queryResult.errors());
-                    return Status.ERROR;
-                }
-            }
-            return Status.OK;
-        } catch (Exception ex) {
-            ex.printStackTrace();
-            return Status.ERROR;
-        }
-    }
-
-    private static String encodeN1qlFields(final HashMap<String, ByteIterator> values) {
-        if (values.isEmpty()) {
-            return "";
+        if (!queryResult.parseSuccess() || !queryResult.finalSuccess()) {
+          System.err.println(readQuery);
+          System.err.println(queryResult.errors());
+          return Status.ERROR;
         }
 
-        StringBuilder sb = new StringBuilder();
-        for (Map.Entry<String, ByteIterator> entry : values.entrySet()) {
-            String raw = entry.getValue().toString();
-            String escaped = raw.replace("\"", "\\\"").replace("\'", "\\\'");
-            sb.append(entry.getKey()).append("=\"").append(escaped).append("\" ");
+        List<N1qlQueryRow> rows = queryResult.allRows();
+        if (rows.isEmpty()) {
+          return Status.NOT_FOUND;
         }
-        String toReturn = sb.toString();
-        return toReturn.substring(0, toReturn.length() - 1);
-    }
 
-    @Override
-    public Status insert(String table, String key, HashMap<String, ByteIterator> values) {
+        content = rows.get(0).value();
+        if (fields == null) {
+          content = content.getObject(bucketName);
+        }
+      }
+
+      fields = fields == null || fields.isEmpty() ? content.getNames() : fields;
+      for (String field : fields) {
+        Object value = content.get(field);
+        result.put(field, new StringByteIterator(value != null ? value.toString() : ""));
+      }
+      return Status.OK;
+    } catch (Exception ex) {
+      ex.printStackTrace();
+      return Status.ERROR;
+    }
+  }
+
+  @Override
+  public Status update(final String table, final String key,
+                       final HashMap<String, ByteIterator> values) {
+    try {
+      if (kv) {
         if (upsert) {
-            return upsert(table, key, values);
+          return upsert(table, key, values);
         }
 
-        try {
-            if (kv) {
-                waitForMutationResponse(BUCKET.async().insert(
-                  RawJsonDocument.create(formatId(table, key), encode(values)),
-                  persistTo,
-                  replicateTo
-                ));
-            } else {
-                String insertQuery = "INSERT INTO `" + bucketName + "`(KEY,VALUE) VALUES ($1,$2)";
+        waitForMutationResponse(bucket.async().replace(
+            RawJsonDocument.create(formatId(table, key), encode(values)),
+            persistTo,
+            replicateTo
+        ));
+      } else {
+        String fields = encodeN1qlFields(values);
+        String updateQuery = "UPDATE `" + bucketName + "` USE KEYS [$1] SET " + fields;
 
-                N1qlQueryResult queryResult = BUCKET.query(N1qlQuery.parameterized(
-                  insertQuery,
-                  JsonArray.from(formatId(table, key), encodeIntoJson(values)),
-                  N1qlParams.build().adhoc(adhoc).maxParallelism(maxParallelism)
-                ));
+        N1qlQueryResult queryResult = bucket.query(N1qlQuery.parameterized(
+            updateQuery,
+            JsonArray.from(formatId(table, key)),
+            N1qlParams.build().adhoc(adhoc).maxParallelism(maxParallelism)
+        ));
 
-                if (!queryResult.parseSuccess() || !queryResult.finalSuccess()) {
-                    System.err.println(insertQuery);
-                    System.err.println(queryResult.errors());
-                    return Status.ERROR;
-                }
-            }
-            return Status.OK;
-        } catch (Exception ex) {
-            ex.printStackTrace();
-            return Status.ERROR;
+        if (!queryResult.parseSuccess() || !queryResult.finalSuccess()) {
+          System.err.println(updateQuery);
+          System.err.println(queryResult.errors());
+          return Status.ERROR;
         }
-    }
-
-    private Status upsert(String table, String key, HashMap<String, ByteIterator> values) {
-        try {
-            if (kv) {
-                waitForMutationResponse(BUCKET.async().upsert(
-                  RawJsonDocument.create(formatId(table, key), encode(values)),
-                  persistTo,
-                  replicateTo
-                ));
-            } else {
-                String upsertQuery = "UPSERT INTO `" + bucketName + "`(KEY,VALUE) VALUES ($1,$2)";
-
-                N1qlQueryResult queryResult = BUCKET.query(N1qlQuery.parameterized(
-                  upsertQuery,
-                  JsonArray.from(formatId(table, key), encodeIntoJson(values)),
-                  N1qlParams.build().adhoc(adhoc).maxParallelism(maxParallelism)
-                ));
-
-                if (!queryResult.parseSuccess() || !queryResult.finalSuccess()) {
-                    System.err.println(upsertQuery);
-                    System.err.println(queryResult.errors());
-                    return Status.ERROR;
-                }
-            }
-            return Status.OK;
-        } catch (Exception ex) {
-            ex.printStackTrace();
-            return Status.ERROR;
-        }
-    }
-
-    private void waitForMutationResponse(final Observable<? extends Document<?>> input) {
-        if (!syncMutResponse) {
-            input.subscribe(new Subscriber<Document<?>>() {
-                @Override
-                public void onCompleted() {}
-
-                @Override
-                public void onError(Throwable e) {}
-
-                @Override
-                public void onNext(Document<?> document) {}
-            });
-        } else {
-            Blocking.blockForSingle(input, kvTimeout, TimeUnit.MILLISECONDS);
-        }
-    }
-
-    private static JsonObject encodeIntoJson(final HashMap<String, ByteIterator> values) {
-        JsonObject result = JsonObject.create();
-        for (Map.Entry<String, ByteIterator> entry : values.entrySet()) {
-            result.put(entry.getKey(), entry.getValue().toString());
-        }
-        return result;
-    }
-
-    @Override
-    public Status delete(final String table, final String key) {
-        try {
-            if (kv) {
-                BUCKET.remove(formatId(table, key));
-            } else {
-                String deleteQuery = "DELETE FROM `" + bucketName + "` USE KEYS [$1]";
-                N1qlQueryResult queryResult = BUCKET.query(N1qlQuery.parameterized(
-                  deleteQuery,
-                  JsonArray.from(formatId(table, key)),
-                  N1qlParams.build().adhoc(adhoc).maxParallelism(maxParallelism)
-                ));
-
-                if (!queryResult.parseSuccess() || !queryResult.finalSuccess()) {
-                    System.err.println(deleteQuery);
-                    System.err.println(queryResult.errors());
-                    return Status.ERROR;
-                }
-            }
-            return Status.OK;
-        } catch (Exception ex) {
-            ex.printStackTrace();
-            return Status.ERROR;
-        }
-    }
-
-    @Override
-    public Status scan(String table, String startkey, int recordcount, Set<String> fields,
-        Vector<HashMap<String, ByteIterator>> result) {
-        try {
-            String scanQuery = "SELECT " + joinSet(fields) + " FROM `"
-              + bucketName + "` WHERE meta().id >= '$1' LIMIT $2";
-            N1qlQueryResult queryResult = BUCKET.query(N1qlQuery.parameterized(
-                scanQuery,
-                JsonArray.from(formatId(table, startkey), recordcount),
-                N1qlParams.build().adhoc(adhoc).maxParallelism(maxParallelism)
-            ));
-
-            if (!queryResult.parseSuccess() || !queryResult.finalSuccess()) {
-                System.err.println(scanQuery);
-                System.err.println(queryResult.errors());
-                return Status.ERROR;
-            }
-
-            boolean allFields = fields == null || fields.isEmpty();
-            result.ensureCapacity(recordcount);
-
-            for (N1qlQueryRow row : queryResult) {
-                JsonObject value = row.value();
-                if (fields == null) {
-                    value = value.getObject(bucketName);
-                }
-                Set<String> f = allFields ? value.getNames() : fields;
-                HashMap<String, ByteIterator> tuple = new HashMap<String, ByteIterator>(f.size());
-                for (String field : f) {
-                    tuple.put(field, new StringByteIterator(value.getString(field)));
-                }
-                result.add(tuple);
-            }
-            return Status.OK;
-        } catch (Exception ex) {
-            ex.printStackTrace();
-            return Status.ERROR;
-        }
-    }
-
-    private static String joinSet(final Set<String> fields) {
-        if (fields == null || fields.isEmpty()) {
-            return "*";
-        }
-        StringBuilder builder = new StringBuilder();
-        for (String f : fields) {
-            builder.append("`").append(f).append("`").append(",");
-        }
-        String toReturn = builder.toString();
-        return toReturn.substring(0, toReturn.length() - 1);
-    }
-
-    private static String formatId(final String prefix, final String key) {
-        return prefix + ":" + key;
-    }
-
-    private static ReplicateTo parseReplicateTo(final String property) throws DBException {
-        int value = Integer.parseInt(property);
-
-        switch (value) {
-            case 0: return ReplicateTo.NONE;
-            case 1: return ReplicateTo.ONE;
-            case 2: return ReplicateTo.TWO;
-            case 3: return ReplicateTo.THREE;
-            default:
-                throw new DBException(REPLICATE_PROPERTY + " must be between 0 and 3");
-        }
-    }
-
-    private static PersistTo parsePersistTo(final String property) throws DBException {
-        int value = Integer.parseInt(property);
-
-        switch (value) {
-            case 0: return PersistTo.NONE;
-            case 1: return PersistTo.ONE;
-            case 2: return PersistTo.TWO;
-            case 3: return PersistTo.THREE;
-            case 4: return PersistTo.FOUR;
-            default:
-                throw new DBException(PERSIST_PROPERTY + " must be between 0 and 4");
-        }
-    }
-
-    /**
-     * Decode the object from server into the storable result.
-     *
-     * @param source the loaded object.
-     * @param fields the fields to check.
-     * @param dest the result passed back to the ycsb core.
-     */
-    private void decode(final String source, final Set<String> fields,
-                        final HashMap<String, ByteIterator> dest) {
-        try {
-          JsonNode json = JacksonTransformers.MAPPER.readTree(source);
-          boolean checkFields = fields != null && !fields.isEmpty();
-          for (Iterator<Map.Entry<String, JsonNode>> jsonFields = json.fields(); jsonFields.hasNext();) {
-            Map.Entry<String, JsonNode> jsonField = jsonFields.next();
-            String name = jsonField.getKey();
-            if (checkFields && fields.contains(name)) {
-              continue;
-            }
-            JsonNode jsonValue = jsonField.getValue();
-            if (jsonValue != null && !jsonValue.isNull()) {
-              dest.put(name, new StringByteIterator(jsonValue.asText()));
-            }
-          }
-        } catch (Exception e) {
-          throw new RuntimeException("Could not decode JSON");
-        }
-    }
-
-    /**
-     * Encode the object for couchbase storage.
-     *
-     * @param source the source value.
-     * @return the storable object.
-     */
-    private String encode(final HashMap<String, ByteIterator> source) {
-      HashMap<String, String> stringMap = StringByteIterator.getStringMap(source);
-      ObjectNode node = JacksonTransformers.MAPPER.createObjectNode();
-      for (Map.Entry<String, String> pair : stringMap.entrySet()) {
-        node.put(pair.getKey(), pair.getValue());
       }
-      JsonFactory jsonFactory = new JsonFactory();
-      Writer writer = new StringWriter();
-      try {
-        JsonGenerator jsonGenerator = jsonFactory.createGenerator(writer);
-        JacksonTransformers.MAPPER.writeTree(jsonGenerator, node);
-      } catch (Exception e) {
-        throw new RuntimeException("Could not encode JSON value");
-      }
-      return writer.toString();
+      return Status.OK;
+    } catch (Exception ex) {
+      ex.printStackTrace();
+      return Status.ERROR;
     }
+  }
+
+  private static String encodeN1qlFields(final HashMap<String, ByteIterator> values) {
+    if (values.isEmpty()) {
+      return "";
+    }
+
+    StringBuilder sb = new StringBuilder();
+    for (Map.Entry<String, ByteIterator> entry : values.entrySet()) {
+      String raw = entry.getValue().toString();
+      String escaped = raw.replace("\"", "\\\"").replace("\'", "\\\'");
+      sb.append(entry.getKey()).append("=\"").append(escaped).append("\" ");
+    }
+    String toReturn = sb.toString();
+    return toReturn.substring(0, toReturn.length() - 1);
+  }
+
+  @Override
+  public Status insert(String table, String key, HashMap<String, ByteIterator> values) {
+    if (upsert) {
+      return upsert(table, key, values);
+    }
+
+    try {
+      if (kv) {
+        waitForMutationResponse(bucket.async().insert(
+            RawJsonDocument.create(formatId(table, key), encode(values)),
+            persistTo,
+            replicateTo
+        ));
+      } else {
+        String insertQuery = "INSERT INTO `" + bucketName + "`(KEY,VALUE) VALUES ($1,$2)";
+
+        N1qlQueryResult queryResult = bucket.query(N1qlQuery.parameterized(
+            insertQuery,
+            JsonArray.from(formatId(table, key), encodeIntoJson(values)),
+            N1qlParams.build().adhoc(adhoc).maxParallelism(maxParallelism)
+        ));
+
+        if (!queryResult.parseSuccess() || !queryResult.finalSuccess()) {
+          System.err.println(insertQuery);
+          System.err.println(queryResult.errors());
+          return Status.ERROR;
+        }
+      }
+      return Status.OK;
+    } catch (Exception ex) {
+      ex.printStackTrace();
+      return Status.ERROR;
+    }
+  }
+
+  private Status upsert(String table, String key, HashMap<String, ByteIterator> values) {
+    try {
+      if (kv) {
+        waitForMutationResponse(bucket.async().upsert(
+            RawJsonDocument.create(formatId(table, key), encode(values)),
+            persistTo,
+            replicateTo
+        ));
+      } else {
+        String upsertQuery = "UPSERT INTO `" + bucketName + "`(KEY,VALUE) VALUES ($1,$2)";
+
+        N1qlQueryResult queryResult = bucket.query(N1qlQuery.parameterized(
+            upsertQuery,
+            JsonArray.from(formatId(table, key), encodeIntoJson(values)),
+            N1qlParams.build().adhoc(adhoc).maxParallelism(maxParallelism)
+        ));
+
+        if (!queryResult.parseSuccess() || !queryResult.finalSuccess()) {
+          System.err.println(upsertQuery);
+          System.err.println(queryResult.errors());
+          return Status.ERROR;
+        }
+      }
+      return Status.OK;
+    } catch (Exception ex) {
+      ex.printStackTrace();
+      return Status.ERROR;
+    }
+  }
+
+  private void waitForMutationResponse(final Observable<? extends Document<?>> input) {
+    if (!syncMutResponse) {
+      input.subscribe(new Subscriber<Document<?>>() {
+        @Override
+        public void onCompleted() {
+        }
+
+        @Override
+        public void onError(Throwable e) {
+        }
+
+        @Override
+        public void onNext(Document<?> document) {
+        }
+      });
+    } else {
+      Blocking.blockForSingle(input, kvTimeout, TimeUnit.MILLISECONDS);
+    }
+  }
+
+  private static JsonObject encodeIntoJson(final HashMap<String, ByteIterator> values) {
+    JsonObject result = JsonObject.create();
+    for (Map.Entry<String, ByteIterator> entry : values.entrySet()) {
+      result.put(entry.getKey(), entry.getValue().toString());
+    }
+    return result;
+  }
+
+  @Override
+  public Status delete(final String table, final String key) {
+    try {
+      if (kv) {
+        bucket.remove(formatId(table, key));
+      } else {
+        String deleteQuery = "DELETE FROM `" + bucketName + "` USE KEYS [$1]";
+        N1qlQueryResult queryResult = bucket.query(N1qlQuery.parameterized(
+            deleteQuery,
+            JsonArray.from(formatId(table, key)),
+            N1qlParams.build().adhoc(adhoc).maxParallelism(maxParallelism)
+        ));
+
+        if (!queryResult.parseSuccess() || !queryResult.finalSuccess()) {
+          System.err.println(deleteQuery);
+          System.err.println(queryResult.errors());
+          return Status.ERROR;
+        }
+      }
+      return Status.OK;
+    } catch (Exception ex) {
+      ex.printStackTrace();
+      return Status.ERROR;
+    }
+  }
+
+  @Override
+  public Status scan(String table, String startkey, int recordcount, Set<String> fields,
+                     Vector<HashMap<String, ByteIterator>> result) {
+    try {
+      String scanQuery = "SELECT " + joinSet(fields) + " FROM `"
+          + bucketName + "` WHERE meta().id >= '$1' LIMIT $2";
+      N1qlQueryResult queryResult = bucket.query(N1qlQuery.parameterized(
+          scanQuery,
+          JsonArray.from(formatId(table, startkey), recordcount),
+          N1qlParams.build().adhoc(adhoc).maxParallelism(maxParallelism)
+      ));
+
+      if (!queryResult.parseSuccess() || !queryResult.finalSuccess()) {
+        System.err.println(scanQuery);
+        System.err.println(queryResult.errors());
+        return Status.ERROR;
+      }
+
+      boolean allFields = fields == null || fields.isEmpty();
+      result.ensureCapacity(recordcount);
+
+      for (N1qlQueryRow row : queryResult) {
+        JsonObject value = row.value();
+        if (fields == null) {
+          value = value.getObject(bucketName);
+        }
+        Set<String> f = allFields ? value.getNames() : fields;
+        HashMap<String, ByteIterator> tuple = new HashMap<String, ByteIterator>(f.size());
+        for (String field : f) {
+          tuple.put(field, new StringByteIterator(value.getString(field)));
+        }
+        result.add(tuple);
+      }
+      return Status.OK;
+    } catch (Exception ex) {
+      ex.printStackTrace();
+      return Status.ERROR;
+    }
+  }
+
+  private static String joinSet(final Set<String> fields) {
+    if (fields == null || fields.isEmpty()) {
+      return "*";
+    }
+    StringBuilder builder = new StringBuilder();
+    for (String f : fields) {
+      builder.append("`").append(f).append("`").append(",");
+    }
+    String toReturn = builder.toString();
+    return toReturn.substring(0, toReturn.length() - 1);
+  }
+
+  private static String formatId(final String prefix, final String key) {
+    return prefix + ":" + key;
+  }
+
+  private static ReplicateTo parseReplicateTo(final String property) throws DBException {
+    int value = Integer.parseInt(property);
+
+    switch (value) {
+    case 0:
+      return ReplicateTo.NONE;
+    case 1:
+      return ReplicateTo.ONE;
+    case 2:
+      return ReplicateTo.TWO;
+    case 3:
+      return ReplicateTo.THREE;
+    default:
+      throw new DBException(REPLICATE_PROPERTY + " must be between 0 and 3");
+    }
+  }
+
+  private static PersistTo parsePersistTo(final String property) throws DBException {
+    int value = Integer.parseInt(property);
+
+    switch (value) {
+    case 0:
+      return PersistTo.NONE;
+    case 1:
+      return PersistTo.ONE;
+    case 2:
+      return PersistTo.TWO;
+    case 3:
+      return PersistTo.THREE;
+    case 4:
+      return PersistTo.FOUR;
+    default:
+      throw new DBException(PERSIST_PROPERTY + " must be between 0 and 4");
+    }
+  }
+
+  /**
+   * Decode the object from server into the storable result.
+   *
+   * @param source the loaded object.
+   * @param fields the fields to check.
+   * @param dest the result passed back to the ycsb core.
+   */
+  private void decode(final String source, final Set<String> fields,
+                      final HashMap<String, ByteIterator> dest) {
+    try {
+      JsonNode json = JacksonTransformers.MAPPER.readTree(source);
+      boolean checkFields = fields != null && !fields.isEmpty();
+      for (Iterator<Map.Entry<String, JsonNode>> jsonFields = json.fields(); jsonFields.hasNext();) {
+        Map.Entry<String, JsonNode> jsonField = jsonFields.next();
+        String name = jsonField.getKey();
+        if (checkFields && fields.contains(name)) {
+          continue;
+        }
+        JsonNode jsonValue = jsonField.getValue();
+        if (jsonValue != null && !jsonValue.isNull()) {
+          dest.put(name, new StringByteIterator(jsonValue.asText()));
+        }
+      }
+    } catch (Exception e) {
+      throw new RuntimeException("Could not decode JSON");
+    }
+  }
+
+  /**
+   * Encode the object for couchbase storage.
+   *
+   * @param source the source value.
+   * @return the storable object.
+   */
+  private String encode(final HashMap<String, ByteIterator> source) {
+    HashMap<String, String> stringMap = StringByteIterator.getStringMap(source);
+    ObjectNode node = JacksonTransformers.MAPPER.createObjectNode();
+    for (Map.Entry<String, String> pair : stringMap.entrySet()) {
+      node.put(pair.getKey(), pair.getValue());
+    }
+    JsonFactory jsonFactory = new JsonFactory();
+    Writer writer = new StringWriter();
+    try {
+      JsonGenerator jsonGenerator = jsonFactory.createGenerator(writer);
+      JacksonTransformers.MAPPER.writeTree(jsonGenerator, node);
+    } catch (Exception e) {
+      throw new RuntimeException("Could not encode JSON value");
+    }
+    return writer.toString();
+  }
 }
