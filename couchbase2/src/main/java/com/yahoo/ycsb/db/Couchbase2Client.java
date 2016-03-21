@@ -82,8 +82,8 @@ public class Couchbase2Client extends DB {
 
   private static final Object INIT_COORDINATOR = new Object();
   private static volatile CouchbaseEnvironment env = null;
-  private static volatile Cluster cluster = null;
-  private static volatile Bucket bucket = null;
+  private Cluster cluster = null;
+  private Bucket bucket = null;
 
   private static final String HOST_PROPERTY = "couchbase.host";
   private static final String BUCKET_PROPERTY = "couchbase.bucket";
@@ -137,14 +137,10 @@ public class Couchbase2Client extends DB {
             .queryEndpoints(queryEndpoints)
             .kvEndpoints(kvEndpoints)
             .build();
-        }
-        if (cluster == null) {
-          cluster = CouchbaseCluster.create(env, host);
-        }
-        if (bucket == null) {
-          bucket = cluster.openBucket(bucketName, bucketPassword);
           logSettings();
         }
+        cluster = CouchbaseCluster.create(env, host);
+        bucket = cluster.openBucket(bucketName, bucketPassword);
       }
 
       kvTimeout = bucket.environment().kvTimeout();
