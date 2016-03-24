@@ -54,7 +54,7 @@ import java.util.*;
 import java.util.concurrent.TimeUnit;
 
 /**
- * A class that wraps the 1.x CouchbaseClient to allow it to be interfaced with YCSB.
+ * A class that wraps the 2.x CouchbaseClient to allow it to be interfaced with YCSB.
  * This class extends {@link DB} and implements the database interface used by YCSB client.
  *
  * <p> The following options must be passed when using this database client.
@@ -79,25 +79,12 @@ import java.util.concurrent.TimeUnit;
 public class Couchbase2Client extends DB {
 
   private static final CouchbaseLogger LOGGER = CouchbaseLoggerFactory.getInstance(Couchbase2Client.class);
-
   private static final Object INIT_COORDINATOR = new Object();
+
   private static volatile CouchbaseEnvironment env = null;
-  private Cluster cluster = null;
-  private Bucket bucket = null;
 
-  private static final String HOST_PROPERTY = "couchbase.host";
-  private static final String BUCKET_PROPERTY = "couchbase.bucket";
-  private static final String PASSWORD_PROPERTY = "couchbase.password";
-  private static final String SYNC_MUT_PROPERTY = "couchbase.syncMutationResponse";
-  private static final String PERSIST_PROPERTY = "couchbase.persistTo";
-  private static final String REPLICATE_PROPERTY = "couchbase.replicateTo";
-  private static final String UPSERT_PROPERTY = "couchbase.upsert";
-  private static final String ADHOC_PROPOERTY = "couchbase.adhoc";
-  private static final String KV_PROPERTY = "couchbase.kv";
-  private static final String MAX_PARALLEL_PROPERTY = "couchbase.maxParallelism";
-  private static final String KV_ENDPOINTS = "couchbase.kvEndpoints";
-  private static final String QUERY_ENDPOINTS = "couchbase.queryEndpoints";
-
+  private Cluster cluster;
+  private Bucket bucket;
   private String bucketName;
   private boolean upsert;
   private PersistTo persistTo;
@@ -115,19 +102,19 @@ public class Couchbase2Client extends DB {
   public void init() throws DBException {
     Properties props = getProperties();
 
-    host = props.getProperty(HOST_PROPERTY, "127.0.0.1");
-    bucketName = props.getProperty(BUCKET_PROPERTY, "default");
-    String bucketPassword = props.getProperty(PASSWORD_PROPERTY, "");
+    host = props.getProperty("couchbase.host", "127.0.0.1");
+    bucketName = props.getProperty("couchbase.bucket", "default");
+    String bucketPassword = props.getProperty("couchbase.password", "");
 
-    upsert = props.getProperty(UPSERT_PROPERTY, "false").equals("true");
-    persistTo = parsePersistTo(props.getProperty(PERSIST_PROPERTY, "0"));
-    replicateTo = parseReplicateTo(props.getProperty(REPLICATE_PROPERTY, "0"));
-    syncMutResponse = props.getProperty(SYNC_MUT_PROPERTY, "true").equals("true");
-    adhoc = props.getProperty(ADHOC_PROPOERTY, "false").equals("true");
-    kv = props.getProperty(KV_PROPERTY, "true").equals("true");
-    maxParallelism = Integer.parseInt(props.getProperty(MAX_PARALLEL_PROPERTY, "1"));
-    kvEndpoints = Integer.parseInt(props.getProperty(KV_ENDPOINTS, "1"));
-    queryEndpoints = Integer.parseInt(props.getProperty(QUERY_ENDPOINTS, "5"));
+    upsert = props.getProperty("couchbase.upsert", "false").equals("true");
+    persistTo = parsePersistTo(props.getProperty("couchbase.persistTo", "0"));
+    replicateTo = parseReplicateTo(props.getProperty("couchbase.replicateTo", "0"));
+    syncMutResponse = props.getProperty("couchbase.syncMutationResponse", "true").equals("true");
+    adhoc = props.getProperty("couchbase.adhoc", "false").equals("true");
+    kv = props.getProperty("couchbase.kv", "true").equals("true");
+    maxParallelism = Integer.parseInt(props.getProperty("couchbase.maxParallelism", "1"));
+    kvEndpoints = Integer.parseInt(props.getProperty("couchbase.kvEndpoints", "1"));
+    queryEndpoints = Integer.parseInt(props.getProperty("couchbase.queryEndpoints", "5"));
 
     try {
       synchronized (INIT_COORDINATOR) {
@@ -137,23 +124,23 @@ public class Couchbase2Client extends DB {
             .queryEndpoints(queryEndpoints)
             .kvEndpoints(kvEndpoints)
             .build();
-          logSettings();
+          logParams();
         }
-        cluster = CouchbaseCluster.create(env, host);
-        bucket = cluster.openBucket(bucketName, bucketPassword);
       }
 
-      kvTimeout = bucket.environment().kvTimeout();
+      cluster = CouchbaseCluster.create(env, host);
+      bucket = cluster.openBucket(bucketName, bucketPassword);
+      kvTimeout = env.kvTimeout();
     } catch (Exception ex) {
       throw new DBException("Could not connect to Couchbase Bucket.", ex);
     }
 
     if (!kv && !syncMutResponse) {
-      throw new DBException("Not waiting for n1ql responses on mutation is not yet implemented.");
+      throw new DBException("Not waiting for N1QL responses on mutations not yet implemented.");
     }
   }
 
-  private void logSettings() {
+  private void logParams() {
     StringBuilder sb = new StringBuilder();
 
     sb.append("host = ").append(host);
@@ -174,163 +161,265 @@ public class Couchbase2Client extends DB {
 
   @Override
   public Status read(final String table, final String key, Set<String> fields,
-                     final HashMap<String, ByteIterator> result) {
+      final HashMap<String, ByteIterator> result) {
     try {
-      JsonObject content;
+      String docId = formatId(table, key);
       if (kv) {
-        RawJsonDocument loaded = bucket.get(formatId(table, key), RawJsonDocument.class);
-        if (loaded == null) {
-          return Status.NOT_FOUND;
-        }
-        decode(loaded.content(), fields, result);
-        return Status.OK;
+        return readKv(docId, fields, result);
       } else {
-        String readQuery = "SELECT " + joinSet(fields) + " FROM `"
-            + bucketName + "` USE KEYS [$1]";
-        N1qlQueryResult queryResult = bucket.query(N1qlQuery.parameterized(
-            readQuery,
-            JsonArray.from(formatId(table, key)),
-            N1qlParams.build().adhoc(adhoc).maxParallelism(maxParallelism)
-        ));
-
-        if (!queryResult.parseSuccess() || !queryResult.finalSuccess()) {
-          System.err.println(readQuery);
-          System.err.println(queryResult.errors());
-          return Status.ERROR;
-        }
-
-        List<N1qlQueryRow> rows = queryResult.allRows();
-        if (rows.isEmpty()) {
-          return Status.NOT_FOUND;
-        }
-
-        content = rows.get(0).value();
-        if (fields == null) {
-          content = content.getObject(bucketName);
-        }
+        return readN1ql(docId, fields, result);
       }
-
-      fields = fields == null || fields.isEmpty() ? content.getNames() : fields;
-      for (String field : fields) {
-        Object value = content.get(field);
-        result.put(field, new StringByteIterator(value != null ? value.toString() : ""));
-      }
-      return Status.OK;
     } catch (Exception ex) {
       ex.printStackTrace();
       return Status.ERROR;
     }
   }
 
-  @Override
-  public Status update(final String table, final String key,
-                       final HashMap<String, ByteIterator> values) {
+  private Status readKv(String docId, Set<String> fields, final HashMap<String, ByteIterator> result)
+    throws Exception {
+    RawJsonDocument loaded = bucket.get(docId, RawJsonDocument.class);
+    if (loaded == null) {
+      return Status.NOT_FOUND;
+    }
+    decode(loaded.content(), fields, result);
+    return Status.OK;
+  }
+
+  private Status readN1ql(String docId, Set<String> fields, final HashMap<String, ByteIterator> result)
+    throws Exception {
+    String readQuery = "SELECT " + joinFields(fields) + " FROM `" + bucketName + "` USE KEYS [$1]";
+    N1qlQueryResult queryResult = bucket.query(N1qlQuery.parameterized(
+        readQuery,
+        JsonArray.from(docId),
+        N1qlParams.build().adhoc(adhoc).maxParallelism(maxParallelism)
+    ));
+
+    if (!queryResult.parseSuccess() || !queryResult.finalSuccess()) {
+      throw new DBException("Error while parsing N1QL Result. Query: " + readQuery
+        + ", Errors: " + queryResult.errors());
+    }
+
+    N1qlQueryRow row;
     try {
-      if (kv) {
-        if (upsert) {
-          return upsert(table, key, values);
-        }
-
-        waitForMutationResponse(bucket.async().replace(
-            RawJsonDocument.create(formatId(table, key), encode(values)),
-            persistTo,
-            replicateTo
-        ));
-      } else {
-        String fields = encodeN1qlFields(values);
-        String updateQuery = "UPDATE `" + bucketName + "` USE KEYS [$1] SET " + fields;
-
-        N1qlQueryResult queryResult = bucket.query(N1qlQuery.parameterized(
-            updateQuery,
-            JsonArray.from(formatId(table, key)),
-            N1qlParams.build().adhoc(adhoc).maxParallelism(maxParallelism)
-        ));
-
-        if (!queryResult.parseSuccess() || !queryResult.finalSuccess()) {
-          System.err.println(updateQuery);
-          System.err.println(queryResult.errors());
-          return Status.ERROR;
-        }
-      }
-      return Status.OK;
-    } catch (Exception ex) {
-      ex.printStackTrace();
-      return Status.ERROR;
-    }
-  }
-
-  private static String encodeN1qlFields(final HashMap<String, ByteIterator> values) {
-    if (values.isEmpty()) {
-      return "";
+      row = queryResult.rows().next();
+    } catch (NoSuchElementException ex) {
+      return Status.NOT_FOUND;
     }
 
-    StringBuilder sb = new StringBuilder();
-    for (Map.Entry<String, ByteIterator> entry : values.entrySet()) {
-      String raw = entry.getValue().toString();
-      String escaped = raw.replace("\"", "\\\"").replace("\'", "\\\'");
-      sb.append(entry.getKey()).append("=\"").append(escaped).append("\" ");
+    JsonObject content = row.value();
+    if (fields == null) {
+      content = content.getObject(bucketName); // n1ql result set scoped under *.bucketName
+      fields = content.getNames();
     }
-    String toReturn = sb.toString();
-    return toReturn.substring(0, toReturn.length() - 1);
+
+    for (String field : fields) {
+      Object value = content.get(field);
+      result.put(field, new StringByteIterator(value != null ? value.toString() : ""));
+    }
+
+    return Status.OK;
   }
 
   @Override
-  public Status insert(String table, String key, HashMap<String, ByteIterator> values) {
+  public Status update(final String table, final String key, final HashMap<String, ByteIterator> values) {
     if (upsert) {
       return upsert(table, key, values);
     }
 
     try {
+      String docId = formatId(table, key);
       if (kv) {
-        waitForMutationResponse(bucket.async().insert(
-            RawJsonDocument.create(formatId(table, key), encode(values)),
-            persistTo,
-            replicateTo
-        ));
+        return updateKv(docId, values);
       } else {
-        String insertQuery = "INSERT INTO `" + bucketName + "`(KEY,VALUE) VALUES ($1,$2)";
-
-        N1qlQueryResult queryResult = bucket.query(N1qlQuery.parameterized(
-            insertQuery,
-            JsonArray.from(formatId(table, key), encodeIntoJson(values)),
-            N1qlParams.build().adhoc(adhoc).maxParallelism(maxParallelism)
-        ));
-
-        if (!queryResult.parseSuccess() || !queryResult.finalSuccess()) {
-          System.err.println(insertQuery);
-          System.err.println(queryResult.errors());
-          return Status.ERROR;
-        }
+        return updateN1ql(docId, values);
       }
-      return Status.OK;
     } catch (Exception ex) {
       ex.printStackTrace();
       return Status.ERROR;
     }
   }
 
+  private Status updateKv(final String docId, final HashMap<String, ByteIterator> values) {
+    waitForMutationResponse(bucket.async().replace(
+        RawJsonDocument.create(docId, encode(values)),
+        persistTo,
+        replicateTo
+    ));
+    return Status.OK;
+  }
+
+  private Status updateN1ql(final String docId, final HashMap<String, ByteIterator> values)
+    throws Exception {
+    String fields = encodeN1qlFields(values);
+    String updateQuery = "UPDATE `" + bucketName + "` USE KEYS [$1] SET " + fields;
+
+    N1qlQueryResult queryResult = bucket.query(N1qlQuery.parameterized(
+        updateQuery,
+        JsonArray.from(docId),
+        N1qlParams.build().adhoc(adhoc).maxParallelism(maxParallelism)
+    ));
+
+    if (!queryResult.parseSuccess() || !queryResult.finalSuccess()) {
+      throw new DBException("Error while parsing N1QL Result. Query: " + updateQuery
+        + ", Errors: " + queryResult.errors());
+    }
+    return Status.OK;
+  }
+
+  @Override
+  public Status insert(final String table, final String key, final HashMap<String, ByteIterator> values) {
+    if (upsert) {
+      return upsert(table, key, values);
+    }
+
+    try {
+      String docId = formatId(table, key);
+      if (kv) {
+        return insertKv(docId, values);
+      } else {
+        return insertN1ql(docId, values);
+      }
+    } catch (Exception ex) {
+      ex.printStackTrace();
+      return Status.ERROR;
+    }
+  }
+
+  private Status insertKv(final String docId, final HashMap<String, ByteIterator> values) {
+    waitForMutationResponse(bucket.async().insert(
+        RawJsonDocument.create(docId, encode(values)),
+        persistTo,
+        replicateTo
+    ));
+    return Status.OK;
+  }
+
+  private Status insertN1ql(final String docId, final HashMap<String, ByteIterator> values)
+    throws Exception {
+    String insertQuery = "INSERT INTO `" + bucketName + "`(KEY,VALUE) VALUES ($1,$2)";
+
+    N1qlQueryResult queryResult = bucket.query(N1qlQuery.parameterized(
+        insertQuery,
+        JsonArray.from(docId, encodeIntoJson(values)),
+        N1qlParams.build().adhoc(adhoc).maxParallelism(maxParallelism)
+    ));
+
+    if (!queryResult.parseSuccess() || !queryResult.finalSuccess()) {
+      throw new DBException("Error while parsing N1QL Result. Query: " + insertQuery
+        + ", Errors: " + queryResult.errors());
+    }
+    return Status.OK;
+  }
+
   private Status upsert(String table, String key, HashMap<String, ByteIterator> values) {
     try {
+      String docId = formatId(table, key);
       if (kv) {
-        waitForMutationResponse(bucket.async().upsert(
-            RawJsonDocument.create(formatId(table, key), encode(values)),
-            persistTo,
-            replicateTo
-        ));
+        return upsertKv(docId, values);
       } else {
-        String upsertQuery = "UPSERT INTO `" + bucketName + "`(KEY,VALUE) VALUES ($1,$2)";
+        return upsertN1ql(docId, values);
+      }
+    } catch (Exception ex) {
+      ex.printStackTrace();
+      return Status.ERROR;
+    }
+  }
 
-        N1qlQueryResult queryResult = bucket.query(N1qlQuery.parameterized(
-            upsertQuery,
-            JsonArray.from(formatId(table, key), encodeIntoJson(values)),
-            N1qlParams.build().adhoc(adhoc).maxParallelism(maxParallelism)
-        ));
+  private Status upsertKv(String docId, HashMap<String, ByteIterator> values) {
+    waitForMutationResponse(bucket.async().upsert(
+        RawJsonDocument.create(docId, encode(values)),
+        persistTo,
+        replicateTo
+    ));
+    return Status.OK;
+  }
 
-        if (!queryResult.parseSuccess() || !queryResult.finalSuccess()) {
-          System.err.println(upsertQuery);
-          System.err.println(queryResult.errors());
-          return Status.ERROR;
+  private Status upsertN1ql(String docId, HashMap<String, ByteIterator> values)
+    throws Exception {
+    String upsertQuery = "UPSERT INTO `" + bucketName + "`(KEY,VALUE) VALUES ($1,$2)";
+
+    N1qlQueryResult queryResult = bucket.query(N1qlQuery.parameterized(
+        upsertQuery,
+        JsonArray.from(docId, encodeIntoJson(values)),
+        N1qlParams.build().adhoc(adhoc).maxParallelism(maxParallelism)
+    ));
+
+    if (!queryResult.parseSuccess() || !queryResult.finalSuccess()) {
+      throw new DBException("Error while parsing N1QL Result. Query: " + upsertQuery
+        + ", Errors: " + queryResult.errors());
+    }
+    return Status.OK;
+  }
+
+  @Override
+  public Status delete(final String table, final String key) {
+    try {
+      String docId = formatId(table, key);
+      if (kv) {
+        return deleteKv(docId);
+      } else {
+        return deleteN1ql(docId);
+      }
+    } catch (Exception ex) {
+      ex.printStackTrace();
+      return Status.ERROR;
+    }
+  }
+
+  private Status deleteKv(String docId) {
+    waitForMutationResponse(bucket.async().remove(
+        docId,
+        persistTo,
+        replicateTo
+    ));
+    return Status.OK;
+  }
+
+  private Status deleteN1ql(String docId) throws Exception {
+    String deleteQuery = "DELETE FROM `" + bucketName + "` USE KEYS [$1]";
+    N1qlQueryResult queryResult = bucket.query(N1qlQuery.parameterized(
+        deleteQuery,
+        JsonArray.from(docId),
+        N1qlParams.build().adhoc(adhoc).maxParallelism(maxParallelism)
+    ));
+
+    if (!queryResult.parseSuccess() || !queryResult.finalSuccess()) {
+      throw new DBException("Error while parsing N1QL Result. Query: " + deleteQuery
+        + ", Errors: " + queryResult.errors());
+    }
+    return Status.OK;
+  }
+
+  @Override
+  public Status scan(String table, String startkey, int recordcount, Set<String> fields,
+      Vector<HashMap<String, ByteIterator>> result) {
+    try {
+      String scanQuery = "SELECT " + joinFields(fields) + " FROM `" + bucketName + "` WHERE meta().id >= '$1' LIMIT $2";
+      N1qlQueryResult queryResult = bucket.query(N1qlQuery.parameterized(
+          scanQuery,
+          JsonArray.from(formatId(table, startkey), recordcount),
+          N1qlParams.build().adhoc(adhoc).maxParallelism(maxParallelism)
+      ));
+
+      if (!queryResult.parseSuccess() || !queryResult.finalSuccess()) {
+        throw new DBException("Error while parsing N1QL Result. Query: " + scanQuery
+          + ", Errors: " + queryResult.errors());
+      }
+
+      boolean allFields = fields == null || fields.isEmpty();
+      result.ensureCapacity(recordcount);
+
+      for (N1qlQueryRow row : queryResult) {
+        JsonObject value = row.value();
+        if (fields == null) {
+          value = value.getObject(bucketName);
         }
+        Set<String> f = allFields ? value.getNames() : fields;
+        HashMap<String, ByteIterator> tuple = new HashMap<String, ByteIterator>(f.size());
+        for (String field : f) {
+          tuple.put(field, new StringByteIterator(value.getString(field)));
+        }
+        result.add(tuple);
       }
       return Status.OK;
     } catch (Exception ex) {
@@ -359,6 +448,21 @@ public class Couchbase2Client extends DB {
     }
   }
 
+  private static String encodeN1qlFields(final HashMap<String, ByteIterator> values) {
+    if (values.isEmpty()) {
+      return "";
+    }
+
+    StringBuilder sb = new StringBuilder();
+    for (Map.Entry<String, ByteIterator> entry : values.entrySet()) {
+      String raw = entry.getValue().toString();
+      String escaped = raw.replace("\"", "\\\"").replace("\'", "\\\'");
+      sb.append(entry.getKey()).append("=\"").append(escaped).append("\" ");
+    }
+    String toReturn = sb.toString();
+    return toReturn.substring(0, toReturn.length() - 1);
+  }
+
   private static JsonObject encodeIntoJson(final HashMap<String, ByteIterator> values) {
     JsonObject result = JsonObject.create();
     for (Map.Entry<String, ByteIterator> entry : values.entrySet()) {
@@ -367,73 +471,7 @@ public class Couchbase2Client extends DB {
     return result;
   }
 
-  @Override
-  public Status delete(final String table, final String key) {
-    try {
-      if (kv) {
-        bucket.remove(formatId(table, key));
-      } else {
-        String deleteQuery = "DELETE FROM `" + bucketName + "` USE KEYS [$1]";
-        N1qlQueryResult queryResult = bucket.query(N1qlQuery.parameterized(
-            deleteQuery,
-            JsonArray.from(formatId(table, key)),
-            N1qlParams.build().adhoc(adhoc).maxParallelism(maxParallelism)
-        ));
-
-        if (!queryResult.parseSuccess() || !queryResult.finalSuccess()) {
-          System.err.println(deleteQuery);
-          System.err.println(queryResult.errors());
-          return Status.ERROR;
-        }
-      }
-      return Status.OK;
-    } catch (Exception ex) {
-      ex.printStackTrace();
-      return Status.ERROR;
-    }
-  }
-
-  @Override
-  public Status scan(String table, String startkey, int recordcount, Set<String> fields,
-                     Vector<HashMap<String, ByteIterator>> result) {
-    try {
-      String scanQuery = "SELECT " + joinSet(fields) + " FROM `"
-          + bucketName + "` WHERE meta().id >= '$1' LIMIT $2";
-      N1qlQueryResult queryResult = bucket.query(N1qlQuery.parameterized(
-          scanQuery,
-          JsonArray.from(formatId(table, startkey), recordcount),
-          N1qlParams.build().adhoc(adhoc).maxParallelism(maxParallelism)
-      ));
-
-      if (!queryResult.parseSuccess() || !queryResult.finalSuccess()) {
-        System.err.println(scanQuery);
-        System.err.println(queryResult.errors());
-        return Status.ERROR;
-      }
-
-      boolean allFields = fields == null || fields.isEmpty();
-      result.ensureCapacity(recordcount);
-
-      for (N1qlQueryRow row : queryResult) {
-        JsonObject value = row.value();
-        if (fields == null) {
-          value = value.getObject(bucketName);
-        }
-        Set<String> f = allFields ? value.getNames() : fields;
-        HashMap<String, ByteIterator> tuple = new HashMap<String, ByteIterator>(f.size());
-        for (String field : f) {
-          tuple.put(field, new StringByteIterator(value.getString(field)));
-        }
-        result.add(tuple);
-      }
-      return Status.OK;
-    } catch (Exception ex) {
-      ex.printStackTrace();
-      return Status.ERROR;
-    }
-  }
-
-  private static String joinSet(final Set<String> fields) {
+  private static String joinFields(final Set<String> fields) {
     if (fields == null || fields.isEmpty()) {
       return "*";
     }
@@ -462,7 +500,7 @@ public class Couchbase2Client extends DB {
     case 3:
       return ReplicateTo.THREE;
     default:
-      throw new DBException(REPLICATE_PROPERTY + " must be between 0 and 3");
+      throw new DBException("\"couchbase.replicateTo\" must be between 0 and 3");
     }
   }
 
@@ -481,7 +519,7 @@ public class Couchbase2Client extends DB {
     case 4:
       return PersistTo.FOUR;
     default:
-      throw new DBException(PERSIST_PROPERTY + " must be between 0 and 4");
+      throw new DBException("\"couchbase.persistTo\" must be between 0 and 4");
     }
   }
 
