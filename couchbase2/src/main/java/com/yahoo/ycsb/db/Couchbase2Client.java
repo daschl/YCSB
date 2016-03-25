@@ -17,12 +17,15 @@
 
 package com.yahoo.ycsb.db;
 
+import com.couchbase.client.core.env.resources.IoPoolShutdownHook;
 import com.couchbase.client.core.logging.CouchbaseLogger;
 import com.couchbase.client.core.logging.CouchbaseLoggerFactory;
 import com.couchbase.client.deps.com.fasterxml.jackson.core.JsonFactory;
 import com.couchbase.client.deps.com.fasterxml.jackson.core.JsonGenerator;
 import com.couchbase.client.deps.com.fasterxml.jackson.databind.JsonNode;
 import com.couchbase.client.deps.com.fasterxml.jackson.databind.node.ObjectNode;
+import com.couchbase.client.deps.io.netty.channel.EventLoopGroup;
+import com.couchbase.client.deps.io.netty.channel.epoll.EpollEventLoopGroup;
 import com.couchbase.client.java.Bucket;
 import com.couchbase.client.java.Cluster;
 import com.couchbase.client.java.CouchbaseCluster;
@@ -90,6 +93,7 @@ public class Couchbase2Client extends DB {
   private PersistTo persistTo;
   private ReplicateTo replicateTo;
   private boolean syncMutResponse;
+  private boolean epoll;
   private long kvTimeout;
   private boolean adhoc;
   private boolean kv;
@@ -115,15 +119,23 @@ public class Couchbase2Client extends DB {
     maxParallelism = Integer.parseInt(props.getProperty("couchbase.maxParallelism", "1"));
     kvEndpoints = Integer.parseInt(props.getProperty("couchbase.kvEndpoints", "1"));
     queryEndpoints = Integer.parseInt(props.getProperty("couchbase.queryEndpoints", "5"));
+    epoll = props.getProperty("couchbase.epoll", "false").equals("true");
 
     try {
       synchronized (INIT_COORDINATOR) {
         if (env == null) {
-          env = DefaultCouchbaseEnvironment
-            .builder()
-            .queryEndpoints(queryEndpoints)
-            .kvEndpoints(kvEndpoints)
-            .build();
+          DefaultCouchbaseEnvironment.Builder builder = DefaultCouchbaseEnvironment
+              .builder()
+              .queryEndpoints(queryEndpoints)
+              .callbacksOnIoPool(true)
+              .kvEndpoints(kvEndpoints);
+
+          if (epoll) {
+            EventLoopGroup group = new EpollEventLoopGroup();
+            builder.ioPool(group, new IoPoolShutdownHook(group));
+          }
+
+          env = builder.build();
           logParams();
         }
       }

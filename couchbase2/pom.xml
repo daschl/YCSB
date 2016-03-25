@@ -45,5 +45,13 @@ LICENSE file.
         </dependency>
     </dependencies>
 
+  <repositories>
+    <repository>
+      <id>cb</id>
+      <name>couchbase repo</name>
+      <url>http://files.couchbase.com/maven2</url>
+    </repository>
+  </repositories>
+
 
 </project>
