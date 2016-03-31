@@ -37,6 +37,7 @@ import com.couchbase.client.java.document.json.JsonArray;
 import com.couchbase.client.java.document.json.JsonObject;
 import com.couchbase.client.java.env.CouchbaseEnvironment;
 import com.couchbase.client.java.env.DefaultCouchbaseEnvironment;
+import com.couchbase.client.java.error.TemporaryFailureException;
 import com.couchbase.client.java.query.N1qlParams;
 import com.couchbase.client.java.query.N1qlQuery;
 import com.couchbase.client.java.query.N1qlQueryResult;
@@ -298,12 +299,30 @@ public class Couchbase2Client extends DB {
   }
 
   private Status insertKv(final String docId, final HashMap<String, ByteIterator> values) {
-    waitForMutationResponse(bucket.async().insert(
-        RawJsonDocument.create(docId, encode(values)),
-        persistTo,
-        replicateTo
-    ));
-    return Status.OK;
+    // During "load" phase, make sure to throttle the insert load when its going too fast
+    // for the server. All other errors still bubble up directly without further retries.
+    // NOTE: only works when
+    int tries = 60; // roughly 60 seconds with the 1 second sleep, not 100% accurate.
+
+    for(int i = 0; i < tries; i++) {
+      try {
+        waitForMutationResponse(bucket.async().insert(
+            RawJsonDocument.create(docId, encode(values)),
+            persistTo,
+            replicateTo
+        ));
+        return Status.OK;
+      } catch (TemporaryFailureException ex) {
+        try {
+          Thread.sleep(1000);
+        } catch (InterruptedException e) {
+          throw new RuntimeException("Interrupted while sleeping on TMPFAIL backoff.", ex);
+        }
+      }
+    }
+
+    throw new RuntimeException("Still receiving TMPFAIL from the server after trying " + tries + " times. " +
+      "Check your server.");
   }
 
   private Status insertN1ql(final String docId, final HashMap<String, ByteIterator> values)
