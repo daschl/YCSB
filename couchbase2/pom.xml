@@ -37,6 +37,11 @@ LICENSE file.
             <artifactId>java-client</artifactId>
             <version>${couchbase2.version}</version>
         </dependency>
+      <dependency>
+        <groupId>com.couchbase.client</groupId>
+        <artifactId>core-io</artifactId>
+        <version>1.2.7-dp</version>
+      </dependency>
         <dependency>
             <groupId>com.yahoo.ycsb</groupId>
             <artifactId>core</artifactId>

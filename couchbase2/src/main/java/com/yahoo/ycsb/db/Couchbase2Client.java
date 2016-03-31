@@ -17,6 +17,7 @@
 
 package com.yahoo.ycsb.db;
 
+import com.couchbase.client.core.env.DefaultCoreEnvironment;
 import com.couchbase.client.core.env.resources.IoPoolShutdownHook;
 import com.couchbase.client.core.logging.CouchbaseLogger;
 import com.couchbase.client.core.logging.CouchbaseLoggerFactory;
@@ -24,8 +25,14 @@ import com.couchbase.client.deps.com.fasterxml.jackson.core.JsonFactory;
 import com.couchbase.client.deps.com.fasterxml.jackson.core.JsonGenerator;
 import com.couchbase.client.deps.com.fasterxml.jackson.databind.JsonNode;
 import com.couchbase.client.deps.com.fasterxml.jackson.databind.node.ObjectNode;
+import com.couchbase.client.deps.io.netty.channel.DefaultSelectStrategyFactory;
 import com.couchbase.client.deps.io.netty.channel.EventLoopGroup;
+import com.couchbase.client.deps.io.netty.channel.SelectStrategy;
+import com.couchbase.client.deps.io.netty.channel.SelectStrategyFactory;
 import com.couchbase.client.deps.io.netty.channel.epoll.EpollEventLoopGroup;
+import com.couchbase.client.deps.io.netty.channel.nio.NioEventLoopGroup;
+import com.couchbase.client.deps.io.netty.util.IntSupplier;
+import com.couchbase.client.deps.io.netty.util.concurrent.DefaultThreadFactory;
 import com.couchbase.client.java.Bucket;
 import com.couchbase.client.java.Cluster;
 import com.couchbase.client.java.CouchbaseCluster;
@@ -54,8 +61,11 @@ import rx.Subscriber;
 
 import java.io.StringWriter;
 import java.io.Writer;
+import java.nio.channels.spi.SelectorProvider;
 import java.util.*;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.LockSupport;
 
 /**
  * A class that wraps the 2.x CouchbaseClient to allow it to be interfaced with YCSB.
@@ -102,6 +112,7 @@ public class Couchbase2Client extends DB {
   private String host;
   private int kvEndpoints;
   private int queryEndpoints;
+  private boolean boost;
 
   @Override
   public void init() throws DBException {
@@ -121,6 +132,7 @@ public class Couchbase2Client extends DB {
     kvEndpoints = Integer.parseInt(props.getProperty("couchbase.kvEndpoints", "1"));
     queryEndpoints = Integer.parseInt(props.getProperty("couchbase.queryEndpoints", "5"));
     epoll = props.getProperty("couchbase.epoll", "false").equals("true");
+    boost = props.getProperty("couchbase.boost", "false").equals("true");
 
     try {
       synchronized (INIT_COORDINATOR) {
@@ -131,10 +143,20 @@ public class Couchbase2Client extends DB {
               .callbacksOnIoPool(true)
               .kvEndpoints(kvEndpoints);
 
-          if (epoll) {
-            EventLoopGroup group = new EpollEventLoopGroup();
-            builder.ioPool(group, new IoPoolShutdownHook(group));
-          }
+          // allow to tune boosting and epoll down here
+          // little work needs to be done to set all the other common defaults like thread name and pool
+          // size to be sane and still configurable
+          SelectStrategyFactory factory = boost ?
+              new BackoffSelectStrategyFactory() : DefaultSelectStrategyFactory.INSTANCE;
+
+          int poolSize = Integer.parseInt(
+              System.getProperty("com.couchbase.ioPoolSize", Integer.toString(DefaultCoreEnvironment.IO_POOL_SIZE))
+          );
+          ThreadFactory threadFactory = new DefaultThreadFactory("cb-io", true);
+
+          EventLoopGroup group = epoll ? new EpollEventLoopGroup(poolSize, threadFactory, factory)
+              : new NioEventLoopGroup(poolSize, threadFactory, SelectorProvider.provider(), factory);
+          builder.ioPool(group, new IoPoolShutdownHook(group));
 
           env = builder.build();
           logParams();
@@ -168,6 +190,8 @@ public class Couchbase2Client extends DB {
     sb.append(", queryEndpoints = ").append(queryEndpoints);
     sb.append(", kvEndpoints = ").append(kvEndpoints);
     sb.append(", queryEndpoints = ").append(queryEndpoints);
+    sb.append(", epoll = ").append(epoll);
+    sb.append(", boost = ").append(boost);
 
     LOGGER.info("=== Using Params: " + sb.toString());
   }
@@ -603,5 +627,41 @@ public class Couchbase2Client extends DB {
       throw new RuntimeException("Could not encode JSON value");
     }
     return writer.toString();
+  }
+}
+
+class BackoffSelectStrategyFactory implements SelectStrategyFactory {
+  @Override
+  public SelectStrategy newSelectStrategy() {
+    return new BackoffSelectStrategy();
+  }
+}
+
+class BackoffSelectStrategy implements SelectStrategy {
+
+  private int counter = 0;
+
+  @Override
+  public int calculateStrategy(final IntSupplier supplier, final boolean hasTasks) throws Exception {
+    int selectNowResult = supplier.get();
+    if (hasTasks || selectNowResult != 0) {
+      counter = 0;
+      return selectNowResult;
+    }
+    counter++;
+
+    if (counter > 2000) {
+      LockSupport.parkNanos(1);
+    } else if (counter > 3000) {
+      Thread.yield();
+    } else if (counter > 4000) {
+      LockSupport.parkNanos(1000);
+    } else if (counter > 5000) {
+      // defer to blocking select
+      counter = 0;
+      return SelectStrategy.SELECT;
+    }
+
+    return SelectStrategy.CONTINUE;
   }
 }
