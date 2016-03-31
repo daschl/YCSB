@@ -86,6 +86,9 @@ import java.util.concurrent.locks.LockSupport;
  * <li><b>couchbase.maxParallelism=1</b> The server parallelism for all n1ql queries.</li>
  * <li><b>couchbase.kvEndpoints=1</b> The number of KV sockets to open per server.</li>
  * <li><b>couchbase.queryEndpoints=5</b> The number of N1QL Query sockets to open per server.</li>
+ * <li><b>couchbase.epoll=false</b> If Epoll instead of NIO should be used (only available for linux.</li>
+ * <li><b>couchbase.boost=3</b> If > 0 trades CPU for higher throughput. N is the number of event loops, ideally
+ *      set to the number of physical cores. Setting higher than that will likely degrade performance.</li>
  * </ul>
  *
  * @author Michael Nitschinger
@@ -112,7 +115,7 @@ public class Couchbase2Client extends DB {
   private String host;
   private int kvEndpoints;
   private int queryEndpoints;
-  private boolean boost;
+  private int boost;
 
   @Override
   public void init() throws DBException {
@@ -132,7 +135,7 @@ public class Couchbase2Client extends DB {
     kvEndpoints = Integer.parseInt(props.getProperty("couchbase.kvEndpoints", "1"));
     queryEndpoints = Integer.parseInt(props.getProperty("couchbase.queryEndpoints", "5"));
     epoll = props.getProperty("couchbase.epoll", "false").equals("true");
-    boost = props.getProperty("couchbase.boost", "false").equals("true");
+    boost = Integer.parseInt(props.getProperty("couchbase.boost", "3"));
 
     try {
       synchronized (INIT_COORDINATOR) {
@@ -146,10 +149,10 @@ public class Couchbase2Client extends DB {
           // allow to tune boosting and epoll down here
           // little work needs to be done to set all the other common defaults like thread name and pool
           // size to be sane and still configurable
-          SelectStrategyFactory factory = boost ?
+          SelectStrategyFactory factory = boost > 0 ?
               new BackoffSelectStrategyFactory() : DefaultSelectStrategyFactory.INSTANCE;
 
-          int poolSize = Integer.parseInt(
+          int poolSize = boost > 0 ? boost : Integer.parseInt(
               System.getProperty("com.couchbase.ioPoolSize", Integer.toString(DefaultCoreEnvironment.IO_POOL_SIZE))
           );
           ThreadFactory threadFactory = new DefaultThreadFactory("cb-io", true);
