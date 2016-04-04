@@ -45,10 +45,7 @@ import com.couchbase.client.java.document.json.JsonObject;
 import com.couchbase.client.java.env.CouchbaseEnvironment;
 import com.couchbase.client.java.env.DefaultCouchbaseEnvironment;
 import com.couchbase.client.java.error.TemporaryFailureException;
-import com.couchbase.client.java.query.N1qlParams;
-import com.couchbase.client.java.query.N1qlQuery;
-import com.couchbase.client.java.query.N1qlQueryResult;
-import com.couchbase.client.java.query.N1qlQueryRow;
+import com.couchbase.client.java.query.*;
 import com.couchbase.client.java.transcoder.JacksonTransformers;
 import com.couchbase.client.java.util.Blocking;
 import com.yahoo.ycsb.ByteIterator;
@@ -58,6 +55,8 @@ import com.yahoo.ycsb.Status;
 import com.yahoo.ycsb.StringByteIterator;
 import rx.Observable;
 import rx.Subscriber;
+import rx.functions.Action1;
+import rx.functions.Func1;
 
 import java.io.StringWriter;
 import java.io.Writer;
@@ -452,38 +451,94 @@ public class Couchbase2Client extends DB {
   public Status scan(String table, String startkey, int recordcount, Set<String> fields,
       Vector<HashMap<String, ByteIterator>> result) {
     try {
-      String scanQuery = "SELECT " + joinFields(fields) + " FROM `" + bucketName + "` WHERE meta().id >= '$1' LIMIT $2";
-      N1qlQueryResult queryResult = bucket.query(N1qlQuery.parameterized(
-          scanQuery,
-          JsonArray.from(formatId(table, startkey), recordcount),
-          N1qlParams.build().adhoc(adhoc).maxParallelism(maxParallelism)
-      ));
-
-      if (!queryResult.parseSuccess() || !queryResult.finalSuccess()) {
-        throw new DBException("Error while parsing N1QL Result. Query: " + scanQuery
-          + ", Errors: " + queryResult.errors());
+      if (fields == null || fields.isEmpty()) {
+        return scanAllFields(table, startkey, recordcount, result);
+      } else {
+        return scanSpecificFields(table, startkey, recordcount, fields, result);
       }
-
-      boolean allFields = fields == null || fields.isEmpty();
-      result.ensureCapacity(recordcount);
-
-      for (N1qlQueryRow row : queryResult) {
-        JsonObject value = row.value();
-        if (fields == null) {
-          value = value.getObject(bucketName);
-        }
-        Set<String> f = allFields ? value.getNames() : fields;
-        HashMap<String, ByteIterator> tuple = new HashMap<String, ByteIterator>(f.size());
-        for (String field : f) {
-          tuple.put(field, new StringByteIterator(value.getString(field)));
-        }
-        result.add(tuple);
-      }
-      return Status.OK;
     } catch (Exception ex) {
       ex.printStackTrace();
       return Status.ERROR;
     }
+  }
+
+  private Status scanAllFields(String table, String startkey, int recordcount,
+      Vector<HashMap<String, ByteIterator>> result) {
+
+    final String scanQuery = "SELECT meta().id as id FROM `" + bucketName + "` WHERE meta().id >= '$1' LIMIT $2";
+    Collection<HashMap<String, ByteIterator>> documents = bucket.async()
+        .query(N1qlQuery.parameterized(
+        scanQuery,
+        JsonArray.from(formatId(table, startkey), recordcount),
+        N1qlParams.build().adhoc(adhoc).maxParallelism(maxParallelism)
+      ))
+        .doOnNext(new Action1<AsyncN1qlQueryResult>() {
+          @Override
+          public void call(AsyncN1qlQueryResult result) {
+            if (!result.parseSuccess()) {
+              throw new RuntimeException("Error while parsing N1QL Result. Query: " + scanQuery
+                + ", Errors: " + result.errors());
+            }
+          }
+        })
+        .flatMap(new Func1<AsyncN1qlQueryResult, Observable<AsyncN1qlQueryRow>>() {
+          @Override
+          public Observable<AsyncN1qlQueryRow> call(AsyncN1qlQueryResult result) {
+            return result.rows();
+          }
+        })
+        .flatMap(new Func1<AsyncN1qlQueryRow, Observable<RawJsonDocument>>() {
+          @Override
+          public Observable<RawJsonDocument> call(AsyncN1qlQueryRow row) {
+            return bucket.async().get(row.value().getString("id"), RawJsonDocument.class);
+          }
+        })
+        .map(new Func1<RawJsonDocument, HashMap<String, ByteIterator>>() {
+          @Override
+          public HashMap<String, ByteIterator> call(RawJsonDocument document) {
+            HashMap<String, ByteIterator> tuple = new HashMap<String, ByteIterator>();
+            decode(document.content(), null, tuple);
+            return tuple;
+          }
+        })
+        .toList()
+        .toBlocking()
+        .single();
+
+    result.addAll(documents);
+    return Status.OK;
+  }
+
+  private Status scanSpecificFields(String table, String startkey, int recordcount, Set<String> fields,
+    Vector<HashMap<String, ByteIterator>> result) {
+    String scanQuery = "SELECT " + joinFields(fields) + " FROM `" + bucketName + "` WHERE meta().id >= '$1' LIMIT $2";
+    N1qlQueryResult queryResult = bucket.query(N1qlQuery.parameterized(
+      scanQuery,
+      JsonArray.from(formatId(table, startkey), recordcount),
+      N1qlParams.build().adhoc(adhoc).maxParallelism(maxParallelism)
+    ));
+
+    if (!queryResult.parseSuccess() || !queryResult.finalSuccess()) {
+      throw new RuntimeException("Error while parsing N1QL Result. Query: " + scanQuery
+        + ", Errors: " + queryResult.errors());
+    }
+
+    boolean allFields = fields == null || fields.isEmpty();
+    result.ensureCapacity(recordcount);
+
+    for (N1qlQueryRow row : queryResult) {
+      JsonObject value = row.value();
+      if (fields == null) {
+        value = value.getObject(bucketName);
+      }
+      Set<String> f = allFields ? value.getNames() : fields;
+      HashMap<String, ByteIterator> tuple = new HashMap<String, ByteIterator>(f.size());
+      for (String field : f) {
+        tuple.put(field, new StringByteIterator(value.getString(field)));
+      }
+      result.add(tuple);
+    }
+    return Status.OK;
   }
 
   private void waitForMutationResponse(final Observable<? extends Document<?>> input) {
