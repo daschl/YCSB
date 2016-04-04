@@ -510,12 +510,12 @@ public class Couchbase2Client extends DB {
   }
 
   private Status scanSpecificFields(String table, String startkey, int recordcount, Set<String> fields,
-    Vector<HashMap<String, ByteIterator>> result) {
+      Vector<HashMap<String, ByteIterator>> result) {
     String scanQuery = "SELECT " + joinFields(fields) + " FROM `" + bucketName + "` WHERE meta().id >= '$1' LIMIT $2";
     N1qlQueryResult queryResult = bucket.query(N1qlQuery.parameterized(
-      scanQuery,
-      JsonArray.from(formatId(table, startkey), recordcount),
-      N1qlParams.build().adhoc(adhoc).maxParallelism(maxParallelism)
+        scanQuery,
+        JsonArray.from(formatId(table, startkey), recordcount),
+        N1qlParams.build().adhoc(adhoc).maxParallelism(maxParallelism)
     ));
 
     if (!queryResult.parseSuccess() || !queryResult.finalSuccess()) {
