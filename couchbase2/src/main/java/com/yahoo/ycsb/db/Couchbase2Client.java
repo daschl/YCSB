@@ -94,6 +94,11 @@ import java.util.concurrent.locks.LockSupport;
  */
 public class Couchbase2Client extends DB {
 
+  static {
+    // No need to send the full encoded_plan for this benchmark workload, less network overhead!
+    System.setProperty("com.couchbase.query.encodedPlanEnabled", "false");
+  }
+
   private static final CouchbaseLogger LOGGER = CouchbaseLoggerFactory.getInstance(Couchbase2Client.class);
   private static final Object INIT_COORDINATOR = new Object();
 
