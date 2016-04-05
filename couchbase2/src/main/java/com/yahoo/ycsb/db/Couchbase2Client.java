@@ -468,10 +468,10 @@ public class Couchbase2Client extends DB {
   }
 
   private Status scanAllFields(String table, String startkey, int recordcount,
-                               final Vector<HashMap<String, ByteIterator>> result) {
+      Vector<HashMap<String, ByteIterator>> result) {
 
     final String scanQuery = "SELECT meta().id as id FROM `" + bucketName + "` WHERE meta().id >= '$1' LIMIT $2";
-    bucket.async()
+    Collection<HashMap<String, ByteIterator>> documents = bucket.async()
         .query(N1qlQuery.parameterized(
         scanQuery,
         JsonArray.from(formatId(table, startkey), recordcount),
@@ -498,16 +498,19 @@ public class Couchbase2Client extends DB {
             return bucket.async().get(row.value().getString("id"), RawJsonDocument.class);
           }
         })
-        .toBlocking()
-        .forEach(new Action1<RawJsonDocument>() {
+        .map(new Func1<RawJsonDocument, HashMap<String, ByteIterator>>() {
           @Override
-          public void call(RawJsonDocument document) {
+          public HashMap<String, ByteIterator> call(RawJsonDocument document) {
             HashMap<String, ByteIterator> tuple = new HashMap<String, ByteIterator>();
             decode(document.content(), null, tuple);
-            result.add(tuple);
+            return tuple;
           }
-        });
+        })
+        .toList()
+        .toBlocking()
+        .single();
 
+    result.addAll(documents);
     return Status.OK;
   }
 
