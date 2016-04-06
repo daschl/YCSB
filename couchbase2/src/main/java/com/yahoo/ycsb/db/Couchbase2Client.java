@@ -73,7 +73,7 @@ import java.util.concurrent.locks.LockSupport;
  *
  * <ul>
  * <li><b>couchbase.host=127.0.0.1</b> The hostname from one server.</li>
- * <li><b>couchbase.bucket=default</b> The bucket name to use./li>
+ * <li><b>couchbase.bucket=default</b> The bucket name to use.</li>
  * <li><b>couchbase.password=</b> The password of the bucket.</li>
  * <li><b>couchbase.syncMutationResponse=true</b> If mutations should wait for the response to complete.</li>
  * <li><b>couchbase.persistTo=0</b> Persistence durability requirement</li>
