@@ -67,10 +67,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
 
 /**
- * A class that wraps the 2.x CouchbaseClient to allow it to be interfaced with YCSB.
- * This class extends {@link DB} and implements the database interface used by YCSB client.
+ * A class that wraps the 2.x Couchbase SDK to be used with YCSB.
  *
- * <p> The following options must be passed when using this database client.
+ * <p> The following options can be passed when using this database client to override the defaults.
  *
  * <ul>
  * <li><b>couchbase.host=127.0.0.1</b> The hostname from one server.</li>
@@ -150,9 +149,7 @@ public class Couchbase2Client extends DB {
               .callbacksOnIoPool(true)
               .kvEndpoints(kvEndpoints);
 
-          // allow to tune boosting and epoll down here
-          // little work needs to be done to set all the other common defaults like thread name and pool
-          // size to be sane and still configurable
+          // Tune boosting and epoll based on settings
           SelectStrategyFactory factory = boost > 0 ?
               new BackoffSelectStrategyFactory() : DefaultSelectStrategyFactory.INSTANCE;
 
@@ -182,25 +179,28 @@ public class Couchbase2Client extends DB {
     }
   }
 
+  /**
+   * Helper method to log the CLI params so that on the command line debugging is easier.
+   */
   private void logParams() {
     StringBuilder sb = new StringBuilder();
 
-    sb.append("host = ").append(host);
-    sb.append(", bucket = ").append(bucketName);
-    sb.append(", upsert = ").append(upsert);
-    sb.append(", persistTo = ").append(persistTo);
-    sb.append(", replicateTo = ").append(replicateTo);
-    sb.append(", syncMutResponse = ").append(syncMutResponse);
-    sb.append(", adhoc = ").append(adhoc);
-    sb.append(", kv = ").append(kv);
-    sb.append(", maxParallelism = ").append(maxParallelism);
-    sb.append(", queryEndpoints = ").append(queryEndpoints);
-    sb.append(", kvEndpoints = ").append(kvEndpoints);
-    sb.append(", queryEndpoints = ").append(queryEndpoints);
-    sb.append(", epoll = ").append(epoll);
-    sb.append(", boost = ").append(boost);
+    sb.append("host=").append(host);
+    sb.append(", bucket=").append(bucketName);
+    sb.append(", upsert=").append(upsert);
+    sb.append(", persistTo=").append(persistTo);
+    sb.append(", replicateTo=").append(replicateTo);
+    sb.append(", syncMutResponse=").append(syncMutResponse);
+    sb.append(", adhoc=").append(adhoc);
+    sb.append(", kv=").append(kv);
+    sb.append(", maxParallelism=").append(maxParallelism);
+    sb.append(", queryEndpoints=").append(queryEndpoints);
+    sb.append(", kvEndpoints=").append(kvEndpoints);
+    sb.append(", queryEndpoints=").append(queryEndpoints);
+    sb.append(", epoll=").append(epoll);
+    sb.append(", boost=").append(boost);
 
-    LOGGER.info("=== Using Params: " + sb.toString());
+    LOGGER.info("===> Using Params: " + sb.toString());
   }
 
   @Override
@@ -219,7 +219,15 @@ public class Couchbase2Client extends DB {
     }
   }
 
-  private Status readKv(String docId, Set<String> fields, final HashMap<String, ByteIterator> result)
+  /**
+   * Performs the {@link #read(String, String, Set, HashMap)} operation via Key/Value ("get").
+   *
+   * @param docId the document ID
+   * @param fields the fields to be loaded
+   * @param result the result map where the doc needs to be converted into
+   * @return The result of the operation.
+   */
+  private Status readKv(final String docId, final Set<String> fields, final HashMap<String, ByteIterator> result)
     throws Exception {
     RawJsonDocument loaded = bucket.get(docId, RawJsonDocument.class);
     if (loaded == null) {
@@ -229,7 +237,17 @@ public class Couchbase2Client extends DB {
     return Status.OK;
   }
 
-  private Status readN1ql(String docId, Set<String> fields, final HashMap<String, ByteIterator> result)
+  /**
+   * Performs the {@link #read(String, String, Set, HashMap)} operation via N1QL ("SELECT").
+   *
+   * If this option should be used, the "-p couchbase.kv=false" property must be set.
+   *
+   * @param docId the document ID
+   * @param fields the fields to be loaded
+   * @param result the result map where the doc needs to be converted into
+   * @return The result of the operation.
+   */
+  private Status readN1ql(final String docId, Set<String> fields, final HashMap<String, ByteIterator> result)
     throws Exception {
     String readQuery = "SELECT " + joinFields(fields) + " FROM `" + bucketName + "` USE KEYS [$1]";
     N1qlQueryResult queryResult = bucket.query(N1qlQuery.parameterized(
@@ -283,6 +301,13 @@ public class Couchbase2Client extends DB {
     }
   }
 
+  /**
+   * Performs the {@link #update(String, String, HashMap)} operation via Key/Value ("replace").
+   *
+   * @param docId the document ID
+   * @param values the values to update the document with.
+   * @return The result of the operation.
+   */
   private Status updateKv(final String docId, final HashMap<String, ByteIterator> values) {
     waitForMutationResponse(bucket.async().replace(
         RawJsonDocument.create(docId, encode(values)),
@@ -292,6 +317,15 @@ public class Couchbase2Client extends DB {
     return Status.OK;
   }
 
+  /**
+   * Performs the {@link #update(String, String, HashMap)} operation via N1QL ("UPDATE").
+   *
+   * If this option should be used, the "-p couchbase.kv=false" property must be set.
+   *
+   * @param docId the document ID
+   * @param values the values to update the document with.
+   * @return The result of the operation.
+   */
   private Status updateN1ql(final String docId, final HashMap<String, ByteIterator> values)
     throws Exception {
     String fields = encodeN1qlFields(values);
@@ -329,10 +363,18 @@ public class Couchbase2Client extends DB {
     }
   }
 
+  /**
+   * Performs the {@link #insert(String, String, HashMap)} operation via Key/Value ("INSERT").
+   *
+   * Note that during the "load" phase it makes sense to retry TMPFAILS (so that even if the server is
+   * overloaded temporarily the ops will succeed eventually). The current code will retry TMPFAILs
+   * for maximum of one minute and then bubble up the error.
+   *
+   * @param docId the document ID
+   * @param values the values to update the document with.
+   * @return The result of the operation.
+   */
   private Status insertKv(final String docId, final HashMap<String, ByteIterator> values) {
-    // During "load" phase, make sure to throttle the insert load when its going too fast
-    // for the server. All other errors still bubble up directly without further retries.
-    // NOTE: only works when
     int tries = 60; // roughly 60 seconds with the 1 second sleep, not 100% accurate.
 
     for(int i = 0; i < tries; i++) {
@@ -356,13 +398,22 @@ public class Couchbase2Client extends DB {
       "Check your server.");
   }
 
+  /**
+   * Performs the {@link #insert(String, String, HashMap)} operation via N1QL ("INSERT").
+   *
+   * If this option should be used, the "-p couchbase.kv=false" property must be set.
+   *
+   * @param docId the document ID
+   * @param values the values to update the document with.
+   * @return The result of the operation.
+   */
   private Status insertN1ql(final String docId, final HashMap<String, ByteIterator> values)
     throws Exception {
     String insertQuery = "INSERT INTO `" + bucketName + "`(KEY,VALUE) VALUES ($1,$2)";
 
     N1qlQueryResult queryResult = bucket.query(N1qlQuery.parameterized(
         insertQuery,
-        JsonArray.from(docId, encodeIntoJson(values)),
+        JsonArray.from(docId, valuesToJsonObject(values)),
         N1qlParams.build().adhoc(adhoc).maxParallelism(maxParallelism)
     ));
 
@@ -373,7 +424,17 @@ public class Couchbase2Client extends DB {
     return Status.OK;
   }
 
-  private Status upsert(String table, String key, HashMap<String, ByteIterator> values) {
+  /**
+   * Performs an upsert instead of insert or update using either Key/Value or N1QL.
+   *
+   * If this option should be used, the "-p couchbase.upsert=true" property must be set.
+   *
+   * @param table The name of the table
+   * @param key The record key of the record to insert.
+   * @param values A HashMap of field/value pairs to insert in the record
+   * @return The result of the operation.
+   */
+  private Status upsert(final String table, final String key, final HashMap<String, ByteIterator> values) {
     try {
       String docId = formatId(table, key);
       if (kv) {
@@ -387,7 +448,16 @@ public class Couchbase2Client extends DB {
     }
   }
 
-  private Status upsertKv(String docId, HashMap<String, ByteIterator> values) {
+  /**
+   * Performs the {@link #upsert(String, String, HashMap)} operation via Key/Value ("upsert").
+   *
+   * If this option should be used, the "-p couchbase.upsert=true" property must be set.
+   *
+   * @param docId the document ID
+   * @param values the values to update the document with.
+   * @return The result of the operation.
+   */
+  private Status upsertKv(final String docId, final HashMap<String, ByteIterator> values) {
     waitForMutationResponse(bucket.async().upsert(
         RawJsonDocument.create(docId, encode(values)),
         persistTo,
@@ -396,13 +466,22 @@ public class Couchbase2Client extends DB {
     return Status.OK;
   }
 
-  private Status upsertN1ql(String docId, HashMap<String, ByteIterator> values)
+  /**
+   * Performs the {@link #upsert(String, String, HashMap)} operation via N1QL ("UPSERT").
+   *
+   * If this option should be used, the "-p couchbase.upsert=true -p couchbase.kv=false" properties must be set.
+   *
+   * @param docId the document ID
+   * @param values the values to update the document with.
+   * @return The result of the operation.
+   */
+  private Status upsertN1ql(final String docId, final HashMap<String, ByteIterator> values)
     throws Exception {
     String upsertQuery = "UPSERT INTO `" + bucketName + "`(KEY,VALUE) VALUES ($1,$2)";
 
     N1qlQueryResult queryResult = bucket.query(N1qlQuery.parameterized(
         upsertQuery,
-        JsonArray.from(docId, encodeIntoJson(values)),
+        JsonArray.from(docId, valuesToJsonObject(values)),
         N1qlParams.build().adhoc(adhoc).maxParallelism(maxParallelism)
     ));
 
@@ -428,7 +507,13 @@ public class Couchbase2Client extends DB {
     }
   }
 
-  private Status deleteKv(String docId) {
+  /**
+   * Performs the {@link #delete(String, String)} (String, String)} operation via Key/Value ("remove").
+   *
+   * @param docId the document ID.
+   * @return The result of the operation.
+   */
+  private Status deleteKv(final String docId) {
     waitForMutationResponse(bucket.async().remove(
         docId,
         persistTo,
@@ -437,7 +522,15 @@ public class Couchbase2Client extends DB {
     return Status.OK;
   }
 
-  private Status deleteN1ql(String docId) throws Exception {
+  /**
+   * Performs the {@link #delete(String, String)} (String, String)} operation via N1QL ("DELETE").
+   *
+   * If this option should be used, the "-p couchbase.kv=false" property must be set.
+   *
+   * @param docId the document ID.
+   * @return The result of the operation.
+   */
+  private Status deleteN1ql(final String docId) throws Exception {
     String deleteQuery = "DELETE FROM `" + bucketName + "` USE KEYS [$1]";
     N1qlQueryResult queryResult = bucket.query(N1qlQuery.parameterized(
         deleteQuery,
@@ -453,8 +546,8 @@ public class Couchbase2Client extends DB {
   }
 
   @Override
-  public Status scan(String table, String startkey, int recordcount, Set<String> fields,
-      Vector<HashMap<String, ByteIterator>> result) {
+  public Status scan(final String table, final String startkey, final int recordcount, final Set<String> fields,
+      final Vector<HashMap<String, ByteIterator>> result) {
     try {
       if (fields == null || fields.isEmpty()) {
         return scanAllFields(table, startkey, recordcount, result);
@@ -467,9 +560,21 @@ public class Couchbase2Client extends DB {
     }
   }
 
-  private Status scanAllFields(String table, String startkey, int recordcount,
-      Vector<HashMap<String, ByteIterator>> result) {
-
+  /**
+   * Performs the {@link #scan(String, String, int, Set, Vector)} operation, optimized for all fields.
+   *
+   * Since the full document bodies need to be loaded anyways, it makes sense to just grab the document IDs
+   * from N1QL and then perform the bulk loading via KV for better performance. This is a usual pattern with
+   * Couchbase and shows the benefits of using both N1QL and KV together.
+   *
+   * @param table The name of the table
+   * @param startkey The record key of the first record to read.
+   * @param recordcount The number of records to read
+   * @param result A Vector of HashMaps, where each HashMap is a set field/value pairs for one record
+   * @return The result of the operation.
+   */
+  private Status scanAllFields(final String table, final String startkey, final int recordcount,
+      final Vector<HashMap<String, ByteIterator>> result) {
     final String scanQuery = "SELECT meta().id as id FROM `" + bucketName + "` WHERE meta().id >= '$1' LIMIT $2";
     Collection<HashMap<String, ByteIterator>> documents = bucket.async()
         .query(N1qlQuery.parameterized(
@@ -514,8 +619,18 @@ public class Couchbase2Client extends DB {
     return Status.OK;
   }
 
-  private Status scanSpecificFields(String table, String startkey, int recordcount, Set<String> fields,
-      Vector<HashMap<String, ByteIterator>> result) {
+  /**
+   * Performs the {@link #scan(String, String, int, Set, Vector)} operation N1Ql only for a subset of the fields.
+   *
+   * @param table The name of the table
+   * @param startkey The record key of the first record to read.
+   * @param recordcount The number of records to read
+   * @param fields The list of fields to read, or null for all of them
+   * @param result A Vector of HashMaps, where each HashMap is a set field/value pairs for one record
+   * @return The result of the operation.
+   */
+  private Status scanSpecificFields(final String table, final String startkey, final int recordcount,
+      final Set<String> fields, final Vector<HashMap<String, ByteIterator>> result) {
     String scanQuery = "SELECT " + joinFields(fields) + " FROM `" + bucketName + "` WHERE meta().id >= '$1' LIMIT $2";
     N1qlQueryResult queryResult = bucket.query(N1qlQuery.parameterized(
         scanQuery,
@@ -546,6 +661,16 @@ public class Couchbase2Client extends DB {
     return Status.OK;
   }
 
+  /**
+   * Helper method to block on the response, depending on the property set.
+   *
+   * By default, since YCSB is sync the code will always wait for the operation to complete. In some
+   * cases it can be useful to just "drive load" and disable the waiting. Note that when the
+   * "-p couchbase.syncMutationResponse=false" option is used, the measured results by YCSB can basically
+   * be thrown away. Still helpful sometimes during load phases to speed them up :)
+   *
+   * @param input the async input observable.
+   */
   private void waitForMutationResponse(final Observable<? extends Document<?>> input) {
     if (!syncMutResponse) {
       input.subscribe(new Subscriber<Document<?>>() {
@@ -566,6 +691,12 @@ public class Couchbase2Client extends DB {
     }
   }
 
+  /**
+   * Helper method to turn the values into a String, used with {@link #upsertN1ql(String, HashMap)}.
+   *
+   * @param values the values to encode.
+   * @return the encoded string.
+   */
   private static String encodeN1qlFields(final HashMap<String, ByteIterator> values) {
     if (values.isEmpty()) {
       return "";
@@ -581,7 +712,13 @@ public class Couchbase2Client extends DB {
     return toReturn.substring(0, toReturn.length() - 1);
   }
 
-  private static JsonObject encodeIntoJson(final HashMap<String, ByteIterator> values) {
+  /**
+   * Helper method to turn the map of values into a {@link JsonObject} for further use.
+   *
+   * @param values the values to transform.
+   * @return the created json object.
+   */
+  private static JsonObject valuesToJsonObject(final HashMap<String, ByteIterator> values) {
     JsonObject result = JsonObject.create();
     for (Map.Entry<String, ByteIterator> entry : values.entrySet()) {
       result.put(entry.getKey(), entry.getValue().toString());
@@ -589,6 +726,12 @@ public class Couchbase2Client extends DB {
     return result;
   }
 
+  /**
+   * Helper method to join the set of fields into a String suitable for N1QL.
+   *
+   * @param fields the fields to join.
+   * @return the joined fields as a String.
+   */
   private static String joinFields(final Set<String> fields) {
     if (fields == null || fields.isEmpty()) {
       return "*";
@@ -601,10 +744,23 @@ public class Couchbase2Client extends DB {
     return toReturn.substring(0, toReturn.length() - 1);
   }
 
+  /**
+   * Helper method to turn the prefix and key into a proper document ID.
+   *
+   * @param prefix the prefix (table).
+   * @param key the key itself.
+   * @return a document ID that can be used with Couchbase.
+   */
   private static String formatId(final String prefix, final String key) {
     return prefix + ":" + key;
   }
 
+  /**
+   * Helper method to parse the "ReplicateTo" property on startup.
+   *
+   * @param property the proeprty to parse.
+   * @return the parsed setting.
+   */
   private static ReplicateTo parseReplicateTo(final String property) throws DBException {
     int value = Integer.parseInt(property);
 
@@ -622,6 +778,12 @@ public class Couchbase2Client extends DB {
     }
   }
 
+  /**
+   * Helper method to parse the "PersistTo" property on startup.
+   *
+   * @param property the proeprty to parse.
+   * @return the parsed setting.
+   */
   private static PersistTo parsePersistTo(final String property) throws DBException {
     int value = Integer.parseInt(property);
 
@@ -642,11 +804,11 @@ public class Couchbase2Client extends DB {
   }
 
   /**
-   * Decode the object from server into the storable result.
+   * Decode the String from server and pass it into the decoded destination.
    *
    * @param source the loaded object.
    * @param fields the fields to check.
-   * @param dest the result passed back to the ycsb core.
+   * @param dest the result passed back to YCSB.
    */
   private void decode(final String source, final Set<String> fields,
                       final HashMap<String, ByteIterator> dest) {
@@ -670,10 +832,10 @@ public class Couchbase2Client extends DB {
   }
 
   /**
-   * Encode the object for couchbase storage.
+   * Encode the source into a String for storage.
    *
    * @param source the source value.
-   * @return the storable object.
+   * @return the encoded string.
    */
   private String encode(final HashMap<String, ByteIterator> source) {
     HashMap<String, String> stringMap = StringByteIterator.getStringMap(source);
@@ -693,6 +855,9 @@ public class Couchbase2Client extends DB {
   }
 }
 
+/**
+ * Factory for the {@link BackoffSelectStrategy} to be used with boosting.
+ */
 class BackoffSelectStrategyFactory implements SelectStrategyFactory {
   @Override
   public SelectStrategy newSelectStrategy() {
@@ -700,6 +865,9 @@ class BackoffSelectStrategyFactory implements SelectStrategyFactory {
   }
 }
 
+/**
+ * Custom IO select strategy which trades CPU for throughput, used with the boost setting.
+ */
 class BackoffSelectStrategy implements SelectStrategy {
 
   private int counter = 0;
